@@ -1,0 +1,39 @@
+# 排除版本控制和缓存
+.git/
+__pycache__/
+*.pyc
+*.pyo
+
+# 排除本地环境和日志
+.venv/
+.env
+.env.development
+.env.example
+.env.production
+logs/
+
+# 排除大型模型文件（关键！）
+models/
+*.bin
+*.pt
+
+# 排除开发工具
+.vscode/
+*.md
+requirements.txt.bak
+test/
+
+# 补充排除：Python缓存、日志、临时文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+logs/
+files/
+temp/
+# 排除IDE配置文件（如PyCharm的.idea）
+.idea/
+# 排除压缩包、备份文件
+*.zip
+*.tar.gz
+*.bak
