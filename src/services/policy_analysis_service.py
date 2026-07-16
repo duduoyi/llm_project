@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import os
 
+
 class PolicyAnalysisServices:
     """政策解析服务类 - 封装政策文件解析结果"""
     # 全局Mongo写入互斥锁
@@ -268,9 +269,7 @@ class PolicyAnalysisServices:
         ]
         # 执行聚合
         cursor = collection.aggregate(pipeline)
-        result = []
-        async for doc in cursor:
-            result.append(doc)
+        result = await cursor.to_list(length=None)
         return result
 
     def transform_policy_attachments(self, attachments: list):
@@ -348,12 +347,13 @@ class PolicyAnalysisServices:
             return {"success": False, "message": f"存储失败: {str(e)}"}
 
 
-
-
-if __name__ == "__main__":
-    service = PolicyAnalysisServices()
-    # result = service.policy_to_mongodb("政策解析.md")
-    # print(result)
-    service.policy_attachments_to_mongodb()
+# async def main():
+#     service = PolicyAnalysisServices()
+#     await service.init()  # 千万不要漏！
+#     res = await service.policy_attachments_to_mongodb()
+#     print(res)
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())
 
 

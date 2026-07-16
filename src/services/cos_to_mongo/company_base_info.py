@@ -1,8 +1,7 @@
 import re
 import asyncio
-from src.utils.singletons.database_singleton import AsyncMongoSingleton
-import os
-from pathlib import Path
+from src.utils.singletons.database_singleton import AsyncMongoSingleton, CosSingleton
+import io
 from bs4 import BeautifulSoup
 from src.utils.logger import get_logger
 from typing import Union, List
@@ -18,31 +17,41 @@ class CompanyBaseInfo:
         初始化服务类
         """
         self.logger = get_logger(self.__class__.__name__)
-        self.project_root = Path(__file__).parent.parent.parent
-        self.qcc_folder = self.project_root / "files" / "qcc_company"
-        self.listed_folder = self.project_root / "files" / "suzhou_listed_company"
-        # 初始化客户端
+        # 初始化客户端（懒加载）
         self._mongo_client = None
-        self.collection = None
+        self._mongo_db = "dquot"
+        self._mongo_collection = "company_info"
+        self._cos_client = CosSingleton.get_instance()
+        self._bucket_name = "company-report-1366204382"
+        self._qcc_folder = "qcc_company/"
+        self._listed_folder = "suzhou_listed_company/"
 
     async def init(self):
-        """异步初始化，在 lifespan / 任务启动时调用"""
+        """
+        【异步初始化入口】必须await调用！
+        完成Mongo异步客户端创建+连通性ping检测
+        """
+        if self._mongo_client is not None:
+            self.logger.info("Mongo客户端已初始化，跳过")
+            return self
+
+        self.logger.info("开始初始化异步MongoDB客户端...")
         self._mongo_client = await AsyncMongoSingleton.get_instance()
-        self.collection = self._mongo_client['dquot']['company_info']
-        self.logger.info("✅ Async Mongo 客户端初始化完成")
+        self.logger.info("MongoDB客户端初始化完成，连通校验成功")
+        return self
 
     async def listed_company_to_mongodb(self):
         # 1. 获取文件列表（文件遍历是同步操作，to_thread隔离）
-        file_path_list = await asyncio.to_thread(
+        file_key_list = await asyncio.to_thread(
             self._get_files_list,
-            folder_path=self.listed_folder,
+            folder_path=self._listed_folder,
             file_format=".txt"
         )
-        self.logger.info(f"文件列表: {file_path_list}")
+        self.logger.info(f"文件列表: {file_key_list}")
         # 2. 读取文件内容
         all_companies_data = []
-        for file_path in file_path_list:
-            company_data = await asyncio.to_thread(self._read_txt_file, file_path)
+        for file_key in file_key_list:
+            company_data = await asyncio.to_thread(self._read_txt_file, file_key)
             all_companies_data.extend(company_data)
         # 3. 过滤 ST 公司
         company_filtered = await asyncio.to_thread(self._filter_st_companies, all_companies_data)
@@ -59,21 +68,21 @@ class CompanyBaseInfo:
         # 1. 获取文件列表（根据 file_name 判断）
         if file_name is not None:
             # 有指定文件名 → 只读取这一个文件
-            file_path_list = [self.qcc_folder / file_name]  # 拼接完整路径
+            file_key_list = [f"{self._qcc_folder}{file_name}"]
         else:
             # 无指定文件名 → 遍历文件夹所有 xlsx
-            file_path_list = await asyncio.to_thread(
+            file_key_list = await asyncio.to_thread(
                 self._get_files_list,
-                folder_path=self.qcc_folder,
+                folder_path=self._qcc_folder,
                 file_format=".xlsx"
             )
 
-        self.logger.info(f"待处理文件列表: {file_path_list}")
+        self.logger.info(f"待处理文件列表: {file_key_list}")
 
         # 2. 读取文件内容
         company_data_list = []
-        for file_path in file_path_list:
-            company_data = await asyncio.to_thread(self._read_excel_file, file_path)
+        for file_key in file_key_list:
+            company_data = await asyncio.to_thread(self._read_excel_file, file_key)
             company_data_list.extend(company_data)
         # 3. 格式转换
         update_data = await asyncio.to_thread(
@@ -84,27 +93,58 @@ class CompanyBaseInfo:
         success = await self._save_to_mongodb(update_data)
         self.logger.info(f"✅ 完成同步：{success} 条数据（仅给企业基本信息新增字段，所有旧数据完全保留）")
 
-    @staticmethod
-    def _get_files_list(folder_path, file_format: tuple | str):
+    def _get_files_list(self, prefix, file_format):
         """读取文件夹下指定格式文件"""
-        file_list = [f for f in os.listdir(folder_path) if f.lower().endswith(file_format)]
-    
-        file_path_list = []
-        for filename in file_list:
-            file_path = os.path.join(folder_path, filename)
-            file_path_list.append(file_path)
-    
-        return file_path_list
+        file_list = []
+        marker = ""
 
-    def _read_txt_file(self, file_path: str):
-        """读取.txt 文件"""
+        while True:
+            response = self._cos_client.list_objects(Bucket=self._bucket_name, Prefix=prefix, Marker=marker)
+            contents = response.get('Contents', [])
+            if not contents:
+                break
+
+            for item in contents:
+                key = item['Key']
+                # 排除虚拟目录（key以/结尾代表文件夹）
+                if key.lower().endswith(file_format) :
+                    file_list.append(key)
+
+            if response.get('IsTruncated') == 'true':
+                marker = response.get('NextMarker', '')
+            else:
+                break
+
+        return file_list
+
+    def _read_txt_file(self, file_key: str, encoding: str = "utf-8"):
+        """
+        从COS读取.txt文件，解析HTML表格转JSON
+        :param file_key: COS对象key（远端路径，不是本地路径）
+        :param encoding: 文件编码
+        :return: list[dict]
+        """
+        resp = self._cos_client.get_object(Bucket=self._bucket_name, Key=file_key)
+        raw_bytes = resp["Body"].get_raw_stream().read()
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = raw_bytes.decode(encoding)
             data = self._parse_table_to_json(content)
             return data
+        except self._cos_client.exceptions.NoSuchKey:
+            self.logger.error(f"⚠️ COS文件不存在：{file_key}")
+            return []
+        except UnicodeDecodeError:
+            self.logger.warning(f"编码{encoding}失败，尝试GBK {file_key}")
+            try:
+                content = raw_bytes.decode("gbk")
+                data = self._parse_table_to_json(content)
+                return data
+            except Exception as e:
+                self.logger.error(f"GBK解码也失败 {file_key}: {e}")
+                return []
         except Exception as e:
-            self.logger.error(f"⚠️ 处理 {file_path} 失败：{e}")
+            self.logger.error(f"⚠️ 处理COS文件 {file_key} 失败：{e}", exc_info=True)
+            return []
 
     @staticmethod
     def _parse_table_to_json(txt_content):
@@ -184,25 +224,36 @@ class CompanyBaseInfo:
 
     def _read_excel_file(
             self,
-            file_path: str,
+            file_key: str,
             sheet_name: Union[str, int, None] = 0,
             header: Union[int, None] = 0,
             usecols: Union[int, str, List[Union[int, str]], None] = None
     ):
-        """读取文件夹下所有 .xlsx 文件，合并数据"""
+        """
+        从COS读取Excel文件，内存流交给pandas解析(适用于结构规范、数据量小的表格)，兼容原有入参和返回格式
+        :param file_key: COS 对象完整Key
+        """
         try:
+            # 1. 从COS下载二进制数据流
+            resp = self._cos_client.get_object(Bucket=self._bucket_name, Key=file_key)
+            binary_data = resp["Body"].get_raw_stream().read()
+            stream = io.BytesIO(binary_data)
+
             df = pd.read_excel(
-                file_path,
+                stream,
                 sheet_name=sheet_name,
                 header=header,
                 usecols=usecols,
                 engine='openpyxl'
             )
-            self.logger.debug(f"文件路径: {file_path} (表名: {sheet_name}, 行数: {len(df)})")
+            self.logger.debug(f"COS文件Key: {file_key} (表名: {sheet_name}, 行数: {len(df)})")
             jsons = df.to_dict(orient='records')
             return jsons
+        except self._cos_client.exceptions.NoSuchKey:
+            self.logger.error(f"COS 文件不存在 key={file_key}")
+            raise
         except Exception as e:
-            self.logger.error(f"{sheet_name} 文件读取失败: {e}")
+            self.logger.error(f"{sheet_name} 读取COS Excel失败: {e}", exc_info=True)
             raise
 
     @staticmethod
@@ -221,7 +272,6 @@ class CompanyBaseInfo:
             "企业基本信息": company
         }
         return final_data
-
 
     async def _save_to_mongodb(self, data_list):
         """存入MongoDB"""
@@ -252,9 +302,10 @@ class CompanyBaseInfo:
                             update_query[field_path] = value
 
                 try:
+                    collection = self._mongo_client[self._mongo_db][self._mongo_collection]
                     # 1. 更新普通字段
                     if update_query:
-                        await self.collection.update_one(
+                        await collection.update_one(
                             {"_id": company_name},
                             {"$set": update_query},
                             upsert=True
@@ -262,7 +313,7 @@ class CompanyBaseInfo:
 
                     # 2. 追加荣誉（已经修复成数组，直接push）
                     if honor_value is not None:
-                        await self.collection.update_one(
+                        await collection.update_one(
                             {"_id": company_name},
                             {"$push": {
                                 "企业基本信息.企业荣誉": honor_value

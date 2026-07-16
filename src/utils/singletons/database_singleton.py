@@ -1,33 +1,3 @@
-
-class MongoSingleton:
-    _instance = None
-
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            from pymongo import MongoClient
-            from src.config.database import MONGODB_CONFIG
-            config = MONGODB_CONFIG
-            # 构建连接URI
-            if config.get("user") and config.get("password"):
-                uri = (
-                    f"mongodb://{config['user']}:{config['password']}@"
-                    f"{config['host']}:{config['port']}/"
-                    f"?authSource={config.get('auth_source', 'admin')}&authMechanism=SCRAM-SHA-1"
-                )
-            else:
-                uri = f"mongodb://{config['host']}:{config['port']}/"
-
-            cls._instance = MongoClient(
-                uri,
-                serverSelectionTimeoutMS=5000,
-                maxPoolSize=config.get('max_pool_size', 10),
-                minPoolSize=config.get('min_pool_size', 1)
-            )
-        return cls._instance
-
-
-
 from typing import Dict, Optional
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
@@ -83,6 +53,11 @@ class AsyncMongoSingleton:
                 maxPoolSize=config.get('max_pool_size', 10),
                 minPoolSize=config.get('min_pool_size', 1)
             )
+            # 主动测试连接
+            try:
+                await cls._client.admin.command("ping")
+            except Exception as e:
+                raise ConnectionError("MongoDB连接失败") from e
         return cls._client
 
     @classmethod

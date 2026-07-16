@@ -2,7 +2,7 @@
 报告服务模块 - 实现异步高并发的企业年报MDA分析流程
 工作流程：COS读取PDF → 提取MDA章节 → 保存MDA PDF → 转换为Markdown → 调用LLM解析 → 存储MongoDB
 """
-from src.utils.singletons.database_singleton import MongoSingleton, CosSingleton
+from src.utils.singletons.database_singleton import AsyncMongoSingleton, CosSingleton
 from src.utils.singletons.ai_singleton import LLMFactory
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.utils.logger import get_logger
@@ -20,6 +20,8 @@ import asyncio
 
 class CompanyReportServices:
     """报告服务类 - 封装校企匹配报告生成的核心逻辑（支持异步高并发）"""
+    # 全局异步写入锁：防止多任务并发写入Mongo造成竞争
+    _mongo_write_lock = asyncio.Lock()
 
     def __init__(self, max_workers: int = 5):
         """
@@ -30,28 +32,45 @@ class CompanyReportServices:
         self.max_workers = max_workers
 
         # 初始化客户端（懒加载）
-        self._mongo_client = MongoSingleton.get_instance()
+        self._mongo_client = None
+        self._mongo_db = "dquot"
+        self._mongo_collection = "company_info"
         self._llm_client = LLMFactory.get_instance('qwen')
         self._cos_client = CosSingleton.get_instance()
+        self._bucket_name = "company-report-1366204382"
+
+    async def init(self):
+        """
+        【异步初始化入口】必须await调用！
+        完成Mongo异步客户端创建+连通性ping检测
+        """
+        if self._mongo_client is not None:
+            self.logger.info("Mongo客户端已初始化，跳过")
+            return self
+
+        self.logger.info("开始初始化异步MongoDB客户端...")
+        self._mongo_client = await AsyncMongoSingleton.get_instance()
+        self.logger.info("MongoDB客户端初始化完成，连通校验成功")
+        return self
 
     # ==================== 核心异步工作流 ====================
     async def process_batch_async(
             self,
-            bucket_name: str = "company-report-1366204382",
-            source_prefix: str = "2025年/",
-            mda_prefix: str = "2025年/MDA/",
-            collection_name: str = "company_info",
-            db_name: str = "dquot"
+            source_prefix: str = "2025年/"
     ) -> dict:
         """
         异步批量处理：完整工作流程（读取→提取MDA→转换→解析→存储）
         :return: 处理结果汇总
         """
+        # 防御性校验，防止忘记调用init()
+        if self._mongo_client is None:
+            raise RuntimeError("请先执行 await service.init() 初始化Mongo客户端！")
+
         self.logger.info(f"开始异步批量处理 | LLM最大并发: {self.max_workers} | 源目录: {source_prefix}")
 
         # ========== 步骤1：获取文件（线程池执行） ==========
         pdf_files = await asyncio.to_thread(
-            self._get_company_report_list, bucket_name, source_prefix
+            self._get_company_report_list, source_prefix
         )
         self.logger.info(f"找到待处理文件: {len(pdf_files)} 个")
 
@@ -71,16 +90,16 @@ class CompanyReportServices:
                 try:
                     file_name = file_key.split('/')[-1]
                     base_name = os.path.splitext(file_name)[0]
-                    mda_pdf_key = f"{mda_prefix}{base_name}_mda.pdf"
+                    mda_pdf_key = f"{source_prefix}MDA/{base_name}_mda.pdf"
 
                     self.logger.info(f"[MDA提取] {file_name}")
 
-                    extracted_key = await self._extract_and_save_mda(mda_pdf_key, bucket_name)
+                    extracted_key = await self._extract_and_save_mda(mda_pdf_key)
                     if not extracted_key:
                         return {"success": False, "file_key": file_key, "error": "提取MDA失败"}
 
                     self.logger.info(f"[MDA解析] {mda_pdf_key}")
-                    save_result = await self._analyze_and_save_mda(mda_pdf_key, bucket_name, collection_name, db_name)
+                    save_result = await self._analyze_and_save_mda(mda_pdf_key)
                     if save_result.get("success"):
                         self.logger.info(f"[成功] {mda_pdf_key}")
                         return {"success": True, "file_key": mda_pdf_key}
@@ -115,13 +134,13 @@ class CompanyReportServices:
         return summary
 
     # ==================== 获取年报pdf列表 ====================
-    def _get_company_report_list(self, bucket_name: str, prefix: str) -> List[str]:
-        """从COS获取文件列表"""
+    def _get_company_report_list(self, prefix: str) -> List[str]:
+        """从COS获取文件列表（同步方法，由to_thread调用）"""
         pdf_files = []
         marker = ""
 
         while True:
-            response = self._cos_client.list_objects(Bucket=bucket_name, Prefix=prefix, Marker=marker)
+            response = self._cos_client.list_objects(Bucket=self._bucket_name, Prefix=prefix, Marker=marker)
             contents = response.get('Contents', [])
             if not contents:
                 break
@@ -141,8 +160,7 @@ class CompanyReportServices:
     # ==================== 提取并存储MDA.pdf ====================
     async def _extract_and_save_mda(
             self,
-            mda_file_key: str,
-            bucket_name: str,
+            mda_file_key: str
     ):
         """
         异步安全：提取MDA章节并保存为PDF
@@ -151,14 +169,14 @@ class CompanyReportServices:
         def _extract_and_save_mda_sync():
             # 检查文件是否已存在，存在则直接返回
             try:
-                self._cos_client.head_object(Bucket=bucket_name, Key=mda_file_key)
+                self._cos_client.head_object(Bucket=self._bucket_name, Key=mda_file_key)
                 self.logger.info(f"[提取跳过] {mda_file_key} 已存在")
                 return mda_file_key
             except FileNotFoundError:
                 # 文件不存在，继续生成
                 pass
 
-            response = self._cos_client.get_object(Bucket=bucket_name, Key=mda_file_key)
+            response = self._cos_client.get_object(Bucket=self._bucket_name, Key=mda_file_key)
             pdf_data = response['Body'].get_raw_stream().read()
             
             toc_text = self._find_toc_page(pdf_data)
@@ -193,7 +211,7 @@ class CompanyReportServices:
             output.seek(0)
 
             self._cos_client.put_object(
-                Bucket=bucket_name,
+                Bucket=self._bucket_name,
                 Key=mda_file_key,
                 Body=output.read(),
                 ContentType='application/pdf'
@@ -283,26 +301,23 @@ class CompanyReportServices:
     async def _analyze_and_save_mda(
             self,
             mda_pdf_key: str,
-            bucket_name: str,
-            collection_name: str,
-            db_name: str
     ):
         """异步安全：将MDA PDF转换为Markdown格式"""
         # pymongo 同步查询，丢线程池执行
         exists = await asyncio.to_thread(
-            self._check_mongodb_exists, collection_name, db_name, mda_pdf_key
+            self._check_mongodb_exists, mda_pdf_key
         )
         if exists:
             self.logger.info(f"[解析跳过] {mda_pdf_key} 已入库")
             return {"success": True}
 
-        markdown_content = await asyncio.to_thread(self._convert_mda_to_markdown, mda_pdf_key, bucket_name)
+        markdown_content = await asyncio.to_thread(self._convert_mda_to_markdown, mda_pdf_key)
 
         if not markdown_content:
             return {"success": False, "message": "MD转换失败"}
 
         self.logger.info(f"[LLM解析] {mda_pdf_key}")
-        company_info = await asyncio.to_thread(self._analyze_with_llm, markdown_content, 2)
+        company_info = await self._analyze_with_llm_async(markdown_content, max_retries=2)
         if not company_info or "error" in company_info:
             return {"success": False, "file_key": mda_pdf_key, "error": company_info.get("error", "LLM解析失败")}
 
@@ -315,18 +330,16 @@ class CompanyReportServices:
 
         # 6. 保存MongoDB
         # pymongo 同步存储，丢线程池
-        return await asyncio.to_thread(
-            self._save_json_to_mongodb, company_info, collection_name, db_name
-        )
+        return await self._save_json_to_mongodb(company_info)
 
-    def _check_mongodb_exists(self, collection_name: str, db_name: str, mda_file_key: str) -> bool:
+    async def _check_mongodb_exists(self, mda_file_key: str) -> bool:
         """
         异步安全版：检查MongoDB记录是否存在
         """
         try:
-            collection = self._mongo_client[db_name][collection_name]
+            collection = self._mongo_client[self._mongo_db][self._mongo_collection]
 
-            record = collection.find_one({
+            record = await collection.find_one({
                 "_metadata.mda_file": mda_file_key
             })
             return record is not None
@@ -335,8 +348,8 @@ class CompanyReportServices:
             self.logger.warning(f"检查MongoDB记录失败: {e}")
             return False
 
-    def _convert_mda_to_markdown(self, mda_pdf_key: str, bucket_name: str):
-        response = self._cos_client.get_object(Bucket=bucket_name, Key=mda_pdf_key)
+    def _convert_mda_to_markdown(self, mda_pdf_key: str):
+        response = self._cos_client.get_object(Bucket=self._bucket_name, Key=mda_pdf_key)
         mda_pdf_data = response['Body'].get_raw_stream().read()
         if len(mda_pdf_data) < 100:
             return None
@@ -403,7 +416,7 @@ class CompanyReportServices:
         return total_chars > 5 and (garbled / total_chars < 0.2 if total_chars > 0 else True)
 
     # ==================== LLM调用 ====================
-    def _analyze_with_llm(self, markdown_content: str, max_retries: int = 2) -> dict:
+    async def _analyze_with_llm_async(self, markdown_content: str, max_retries: int = 2) -> dict:
         """调用千问大模型进行MDA分析（带重试机制）"""
         if not markdown_content or len(markdown_content.strip()) < 50:
             self.logger.error(f"Markdown内容太短或为空，长度: {len(markdown_content) if markdown_content else 0}")
@@ -478,7 +491,7 @@ class CompanyReportServices:
                 ]
 
                 self.logger.info(f"正在调用千问大模型... (第{attempt + 1}次尝试)")
-                response = self._llm_client.invoke(messages)
+                response = await self._llm_client.ainvoke(messages)
                 self.logger.info(f"LLM调用成功，开始解析响应...")
 
                 if not hasattr(response, 'content'):
@@ -525,11 +538,9 @@ class CompanyReportServices:
         return '\n'.join(line.strip() for line in text.split('\n'))
 
     # ==================== MongoDB存储 ====================
-    def _save_json_to_mongodb(
+    async def _save_json_to_mongodb(
             self,
-            json_data: dict,
-            collection_name: str,
-            db_name: str = 'dquot'
+            json_data: dict
     ) -> dict:
         """
         存储JSON到MongoDB
@@ -537,49 +548,50 @@ class CompanyReportServices:
         只更新/新增字段，旧字段 100% 保留
         特别处理：企业基本信息 只新增不存在的键，不覆盖已有键
         """
-        try:
-            collection = self._mongo_client[db_name][collection_name]
+        async with self._mongo_write_lock:
+            try:
+                collection = self._mongo_client[self._mongo_db][self._mongo_collection]
 
-            # 固定使用 _id 作为唯一键
-            if "_id" in json_data:
-                # ==============================================
-                # 核心修改：拆分更新逻辑，不覆盖企业基本信息原有字段
-                # ==============================================
-                update_query = {}
+                # 固定使用 _id 作为唯一键
+                if "_id" in json_data:
+                    # ==============================================
+                    # 核心修改：拆分更新逻辑，不覆盖企业基本信息原有字段
+                    # ==============================================
+                    update_query = {}
 
-                # 1. 提取 企业基本信息（如果有），使用 $set 合并，不会覆盖原有键
-                company_info = json_data.pop("企业基本信息", None)
-                if company_info and isinstance(company_info, dict):
-                    for key, value in company_info.items():
-                        update_query[f"企业基本信息.{key}"] = value
+                    # 1. 提取 企业基本信息（如果有），使用 $set 合并，不会覆盖原有键
+                    company_info = json_data.pop("企业基本信息", None)
+                    if company_info and isinstance(company_info, dict):
+                        for key, value in company_info.items():
+                            update_query[f"企业基本信息.{key}"] = value
 
-                # 2. 剩余顶层字段正常更新（不包含企业基本信息）
-                if json_data:
-                    for key, value in json_data.items():
-                        update_query[key] = value
+                    # 2. 剩余顶层字段正常更新（不包含企业基本信息）
+                    if json_data:
+                        for key, value in json_data.items():
+                            update_query[key] = value
 
-                # 执行更新：只新增/更新，不覆盖旧字段
-                result = collection.update_one(
-                    {"_id": json_data["_id"]},  # 按 _id 匹配
-                    {"$set": update_query},  # 只更新需要的字段
-                    upsert=True  # 不存在则新增
-                )
+                    # 执行更新：只新增/更新，不覆盖旧字段
+                    result = await collection.update_one(
+                        {"_id": json_data["_id"]},  # 按 _id 匹配
+                        {"$set": update_query},  # 只更新需要的字段
+                        upsert=True  # 不存在则新增
+                    )
 
-                return {
-                    "success": True,
-                    "message": "Upsert成功（企业基本信息只新增字段，不覆盖旧字段）",
-                    "matched": result.matched_count,
-                    "modified": result.modified_count,
-                    "upserted_id": str(result.upserted_id) if result.upserted_id else None
-                }
-            else:
-                # 无 _id 时直接插入
-                result = collection.insert_one(json_data)
-                return {"success": True, "message": "插入成功", "inserted_id": str(result.inserted_id)}
+                    return {
+                        "success": True,
+                        "message": "Upsert成功（企业基本信息只新增字段，不覆盖旧字段）",
+                        "matched": result.matched_count,
+                        "modified": result.modified_count,
+                        "upserted_id": str(result.upserted_id) if result.upserted_id else None
+                    }
+                else:
+                    # 无 _id 时直接插入
+                    result = await collection.insert_one(json_data)
+                    return {"success": True, "message": "插入成功", "inserted_id": str(result.inserted_id)}
 
-        except Exception as e:
-            self.logger.error(f"MongoDB存储失败: {e}")
-            return {"success": False, "message": f"存储失败: {str(e)}"}
+            except Exception as e:
+                self.logger.error(f"MongoDB存储失败: {e}")
+                return {"success": False, "message": f"存储失败: {str(e)}"}
 
 
 
