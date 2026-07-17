@@ -31,6 +31,7 @@ __pycache__/
 logs/
 files/
 temp/
+wheels/
 # 排除IDE配置文件（如PyCharm的.idea）
 .idea/
 # 排除压缩包、备份文件

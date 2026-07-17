@@ -4,9 +4,10 @@ from src.utils.security import ETLAuthGuard
 import uuid
 from pydantic import BaseModel, Field
 from enum import Enum
+from src.core.scheduler import scheduler, CronTrigger
 from src.services.ETL.task_manager import TaskManager
 from src.services.ETL.service_registry import ServiceRegistry
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # === FastAPI 路由 ===
 router = APIRouter(
@@ -22,6 +23,71 @@ task_manager = TaskManager(
     consumer_workers=3
 )
 
+# ====================== ETL定时任务配置【仅ETL模块自己的定时任务】 ======================
+# 每个ETL服务独立配置【定时cron + 运行参数】
+SCHEDULE_ETL_TASKS = {
+    "teacher_profile_vector": {
+        "cron": CronTrigger(hour=2, minute=30),
+        "config": {
+            "batch_size": 1000
+        }
+    }
+    # 可继续添加其他服务，各自独立定时
+    # "xxx_service": {
+    #     "cron": CronTrigger(hour=4, minute=0),
+    #     "config": {"batch_size":2000}
+    # }
+}
+
+
+def scheduled_etl_task(service_name: str, cfg: dict):
+    """APScheduler 同步包装器，执行异步ETL任务【每日更新前一天数据】"""
+    async def run():
+        run_id = f"{service_name}_daily_{uuid.uuid4().hex[:8]}"
+        try:
+            # 定时任务自动填充前一日时间范围
+            now = datetime.now()
+            yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            task_cfg = cfg.copy()
+            if "start_time" not in task_cfg or task_cfg["start_time"] is None:
+                task_cfg["start_time"] = yesterday_start.strftime("%Y-%m-%d %H:%M:%S")
+            if "end_time" not in task_cfg or task_cfg["end_time"] is None:
+                task_cfg["end_time"] = today_start.strftime("%Y-%m-%d %H:%M:%S")
+
+            req_model = ETLRequest(**task_cfg)
+            service = ServiceRegistry.get_instance(service_name, req_model.model_dump())
+            if not service:
+                print(f"[定时任务失败] {run_id} service {service_name} 不存在")
+                return
+            print(f"[定时ETL日更(前一日数据)] {run_id} 开始执行，参数: {req_model.model_dump()}")
+            await task_manager.start_job(run_id, service)
+            print(f"[定时ETL日更(前一日数据)] {run_id} 提交成功")
+        except Exception as e:
+            print(f"[定时ETL] {service_name} 执行异常: {str(e)}")
+
+    asyncio.run(run())
+
+
+def register_all_schedule_jobs():
+    """遍历配置注册所有独立定时任务"""
+    for srv_name, task_info in SCHEDULE_ETL_TASKS.items():
+        job_id = f"daily_etl_{srv_name}"
+        cron_trigger = task_info["cron"]
+        task_cfg = task_info["config"]
+
+        scheduler.add_job(
+            func=scheduled_etl_task,
+            trigger=cron_trigger,
+            args=[srv_name, task_cfg],
+            id=job_id,
+            replace_existing=True,
+            max_instances=1
+        )
+        print(f"✅ 注册定时任务 {job_id} | cron: {cron_trigger}")
+    print(f"✅ 总计加载 {len(SCHEDULE_ETL_TASKS)} 个ETL定时任务")
+
 class ETLTypes(str, Enum):
     # qdrant_company_patent = 'qdrant_company_patent'
     # qdrant_university_patent = 'qdrant_university_patent'
@@ -33,37 +99,9 @@ class ETLTypes(str, Enum):
     teacher_profile_vector = 'teacher_profile_vector'
 
 class ETLRequest(BaseModel):
-    start_time: str = None
-    end_time: str = None
+    start_time: str
+    end_time: str
     batch_size: int = 1000  # 直接设置batch_size默认值为1000
-
-    def __init__(self, **data):
-        # 获取当前时间
-        now = datetime.now()
-
-        # 计算上个月1号0点：先回退到上个月，再取1号0点0分0秒
-        # 处理1月回退到去年12月的情况
-        last_month = now.month - 1 if now.month > 1 else 12
-        last_month_year = now.year if now.month > 1 else now.year - 1
-        # 构造上个月1号0点的datetime对象
-        default_start = datetime(last_month_year, last_month, 1, 0, 0, 0)
-
-        # 计算当月1号0点
-        default_end = datetime(now.year, now.month, 1, 0, 0, 0)
-
-        # 格式化为字符串（默认用常见的"%Y-%m-%d %H:%M:%S"格式，可根据需求调整）
-        default_start_str = default_start.strftime("%Y-%m-%d %H:%M:%S")
-        default_end_str = default_end.strftime("%Y-%m-%d %H:%M:%S")
-
-        # 如果用户未传start_time/end_time，使用默认值
-        if "start_time" not in data or data["start_time"] is None:
-            data["start_time"] = default_start_str
-        if "end_time" not in data or data["end_time"] is None:
-            data["end_time"] = default_end_str
-
-        # 调用父类的初始化方法
-        super().__init__(**data)
-
 
 # 启动任务接口
 @router.post("/start")
@@ -131,3 +169,19 @@ async def rerun_failed_task(req: ResumeETLRequest):
         "run_id": req.run_id,
         "message": "failed batch rerun started"
     }
+
+
+# ====================== 定时任务查询接口 ======================
+@router.get("/schedule/list")
+async def list_schedule_jobs():
+    """查看当前所有ETL定时任务及下次执行时间"""
+    jobs = scheduler.get_jobs()
+    res = []
+    for job in jobs:
+        res.append({
+            "job_id": job.id,
+            "service_name": job.args[0] if len(job.args) > 0 else None,
+            "next_run_time": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else None,
+            "trigger": str(job.trigger)
+        })
+    return {"schedule_jobs": res}

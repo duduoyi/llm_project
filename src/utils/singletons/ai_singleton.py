@@ -61,19 +61,6 @@ class EmbeddingFactory:
             cls._instances[model_name] = wrapped
         return cls._instances[model_name]
 
-    @staticmethod
-    def _wrap_aembed_query(emb):
-        async def wrapper(text: str):
-            async with EMBED_SEM:
-                return await emb.aembed_query(text)
-        return wrapper
-
-    @staticmethod
-    def _wrap_aembed_documents(emb):
-        async def wrapper(texts: List[str]):
-            async with EMBED_SEM:
-                return await emb.aembed_documents(texts)
-        return wrapper
 
 class LLMFactory:
     """远端大模型调用，ChatOpenAI 原生支持异步 ainvoke，无需额外包装"""

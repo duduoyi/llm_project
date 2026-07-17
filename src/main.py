@@ -20,6 +20,8 @@ from src.utils.singletons.database_singleton import (
 from src.utils.singletons.ai_singleton import EmbeddingFactory, LLMFactory
 # 导入路由模块
 from src.api import system_router, etl_router, front_router
+# ===== 新增：导入etl定时调度器相关 =====
+from src.api.etl_api import scheduler, register_all_schedule_jobs
 
 # 配置日志
 logger = get_logger(__name__)
@@ -30,10 +32,10 @@ async def lifespan(app: FastAPI):
     # 【启动阶段】所有接口进来之前，一次性初始化全部数据库连接池
     logger.info("===== 服务启动，开始预热所有数据库连接 =====")
     try:
-        # 1. MySQL patent 库异步连接池
-        await AsyncMysqlSingleton.get_session("patent")
-        logger.info("✅ MySQL patent 连接池预热完成")
-
+        # # 1. MySQL patent 库异步连接池
+        # await AsyncMysqlSingleton.get_session("patent")
+        # logger.info("✅ MySQL patent 连接池预热完成")
+        #
         # # 2. Neo4j 异步驱动
         # await AsyncNeo4jSingleton.get_driver()
         # logger.info("✅ Neo4j 异步驱动预热完成")
@@ -46,9 +48,9 @@ async def lifespan(app: FastAPI):
         await AsyncMongoSingleton.get_instance()
         logger.info("✅ MongoDB motor 异步客户端预热完成")
 
-        # COS 同步客户端，无await，触发懒加载初始化
-        CosSingleton.get_instance()
-        logger.info("✅ COS 对象存储客户端初始化完成")
+        # # COS 同步客户端，无await，触发懒加载初始化
+        # CosSingleton.get_instance()
+        # logger.info("✅ COS 对象存储客户端初始化完成")
 
         # 嵌入式模型（防止模型加载阻塞事件循环）
         emb_wrapper = await asyncio.to_thread(
@@ -66,6 +68,14 @@ async def lifespan(app: FastAPI):
 
         logger.info("===== 所有数据库资源预热完毕，开始接收请求 =====")
 
+        # ===================== 启动ETL定时调度器 =====================
+        register_all_schedule_jobs()
+        if not scheduler.running:
+            scheduler.start()
+            logger.info("✅ APScheduler ETL定时调度器启动成功")
+
+        logger.info("===== 服务就绪，开始接收请求 =====")
+
     except Exception as e:
         logger.error(f"数据库预热失败，服务终止启动: {str(e)}", exc_info=True)
         # 预热失败直接抛出异常，服务启动失败，避免带故障运行
@@ -77,9 +87,14 @@ async def lifespan(app: FastAPI):
     # 【关闭阶段】服务停止时优雅释放所有异步连接
     logger.info("===== 收到关闭信号，开始销毁数据库连接 =====")
     try:
-        await AsyncNeo4jSingleton.close()
+        # ===================== 关闭定时调度器 =====================
+        if scheduler.running:
+            scheduler.shutdown()
+            logger.info("✅ APScheduler ETL定时调度器已关闭")
+
+        # await AsyncMysqlSingleton.close_all()
+        # await AsyncNeo4jSingleton.close()
         await AsyncMongoSingleton.close()
-        await AsyncMysqlSingleton.close_all()
         await AsyncQdrantSingleton.close_all()
         logger.info("✅ 全部异步数据库连接已正常关闭")
     except Exception as e:
@@ -134,5 +149,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8001,
         loop="uvloop",
-        reload=True  # 生产环境改为False
+        reload=False  # 生产环境改为False
     )

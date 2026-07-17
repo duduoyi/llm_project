@@ -1,12 +1,9 @@
-import asyncio
 from sqlalchemy import select
 from src.utils.singletons.database_singleton import AsyncMysqlSingleton, AsyncQdrantSingleton
 from qdrant_client.models import PointStruct
 from src.services.ETL.base_etl_service import BaseETLService
 from src.config.mysql_patent_orm import OdsUniversityPatentInfo
 from src.utils.singletons.ai_singleton import EmbeddingFactory
-from langchain_qdrant import QdrantVectorStore
-from langchain_core.documents import Document
 from src.utils.data_cleaner import preprocess_all_string_fields
 import hashlib
 

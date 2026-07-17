@@ -1,57 +1,48 @@
-# 数据库连接及依赖
-SQLAlchemy==2.0.43
-# mysql连接及依赖
-pymysql==1.1.2
+# ========== 数据库 ==========
+# mysql异步连接
+sqlalchemy[asyncio]==2.0.43
+asyncmy==0.2.10
 # neo4j 连接及依赖
 neo4j==5.28.2
-# MongoDB 连接及依赖
-pymongo==4.15.3
+# MongoDB 异步
 motor==3.7.1
 # Qdrant 连接及依赖
 qdrant_client==1.15.1
-# 数据清洗
-bs4==0.0.2
-# 数据处理
+
+# ========== 文件&数据处理 ==========
 pandas==2.3.2
 numpy==2.3.3
+# 网页/HTML文本清洗
+beautifulsoup4==4.13.5
+# pdf 文件处理
 pdfplumber==0.11.9
+PyPDF2==3.0.1
+# word 文件处理
 python-docx==1.1.2
-# 文件管理
+# 表格文件处理
 openpyxl
 xlrd
+# cos 对象存储
 cos-python-sdk-v5==1.9.42
-# transformer 模型
+
+# ========== 文本&向量模型 ==========
 sentence_transformers==5.1.0
 transformers==4.56.1
-keybert==0.9.0
-jieba==0.42.1
-# AI模型框架
+torch==2.8.0
+pillow==11.3.0
+
+# ========== LLM & LangChain 生态 ==========
 openai==2.32.0
 langchain==1.2.15
 langchain_openai==1.2.0
-langchain_community==0.4.1
-langchain_qdrant==1.1.0
 langchain_huggingface==1.2.2
-# python框架
+
+# ========== FastAPI 服务基础 ==========
 fastapi==0.116.2
 pydantic==2.11.9
 # web运行
 uvicorn==0.35.0
 # 环境引入
 python-dotenv==1.0.1
-# 绘图
-matplotlib==3.10.8
-# 网络图
-networkx==3.5
-
-
-
-torch~=2.8.0
-starlette~=0.48.0
-
-pillow~=11.3.0
-pytest~=8.4.2
-requests~=2.32.5
-six~=1.17.0
-PyPDF2~=3.0.1
-beautifulsoup4~=4.13.5
+# 定时调度器
+apscheduler==3.11.3

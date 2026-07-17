@@ -19,6 +19,14 @@ class AsyncNeo4jSingleton:
                 max_connection_lifetime=3600,
                 connection_acquisition_timeout=30,
             )
+            # 连通性测试
+            try:
+                async with cls._driver.session() as session:
+                    await session.run("RETURN 1")
+            except Exception as e:
+                await cls._driver.close()
+                cls._driver = None
+                raise ConnectionError("Neo4j 连接测试失败") from e
         return cls._driver
 
     @classmethod
@@ -57,6 +65,8 @@ class AsyncMongoSingleton:
             try:
                 await cls._client.admin.command("ping")
             except Exception as e:
+                cls._client.close()
+                cls._client = None
                 raise ConnectionError("MongoDB连接失败") from e
         return cls._client
 
@@ -76,6 +86,7 @@ class AsyncMysqlSingleton:
     async def get_session(cls, db_name: str):
         if db_name not in cls._engines:
             from src.config.database import MYSQL_MULTI_CONFIG
+            from sqlalchemy import text
             config = MYSQL_MULTI_CONFIG[db_name]
             # 异步连接串：mysql+asyncmy
             dsn = (
@@ -89,6 +100,14 @@ class AsyncMysqlSingleton:
                 pool_recycle=config.get('pool_recycle', 3600),
                 pool_pre_ping=True,
             )
+            # MySQL连通测试
+            try:
+                async with engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            except Exception as e:
+                await engine.dispose()
+                raise ConnectionError(f"MySQL[{db_name}] 连接测试失败") from e
+
             session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
             cls._raw_engines[db_name] = engine
             cls._engines[db_name] = session_factory
@@ -123,6 +142,13 @@ class AsyncQdrantSingleton:
                 prefer_grpc=cfg.get("prefer_grpc", False),
                 timeout=cfg.get("timeout", 300)
             )
+            # Qdrant连通测试
+            try:
+                await client.get_collections()
+            except Exception as e:
+                await client.close()
+                raise ConnectionError(f"Qdrant[{qdrant_type or 'default'}] 连接测试失败") from e
+
             cls._instances[qdrant_type] = client
         return cls._instances[qdrant_type]
 
