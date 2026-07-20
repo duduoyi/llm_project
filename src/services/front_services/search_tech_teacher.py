@@ -6,8 +6,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 class SearchTechTeacherService:
     def __init__(self):
         self.qdrant_coll = "teacher_profile"
-        self.mongo_dbname = "dquot"
-        self.mongo_collection = "teacher_profile"
+        self.mongo_collection = "teacher_profiles"
         self.score_threshold = 0.5
 
     async def search_vector(self, text, university, top_k = 20):
@@ -63,8 +62,8 @@ class SearchTechTeacherService:
     #
     #     from src.utils.singletons.database_singleton import AsyncMongoSingleton
     #     from bson import ObjectId
-    #     mongo_client = await AsyncMongoSingleton.get_instance()
-    #     coll = mongo_client[self.mongo_dbname][self.mongo_collection]
+    #     mongo_db = await AsyncMongoSingleton.get_db()
+    #     coll = mongo_db[self.mongo_collection]
     #
     #     #mongo_id 是字符串，对应 mongo _id(ObjectId)，必须转ObjectId
     #     try:

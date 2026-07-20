@@ -28,6 +28,7 @@ MONGODB_CONFIG = {
     'port': int(os.getenv('MONGODB_PORT')),
     "user": os.getenv('MONGODB_USER', ''),  # 用户名，无则为空
     "password": os.getenv('MONGODB_PASSWORD', ''),  # 密码，无则为空
+    "database": os.getenv('MONGODB_DATABASE', ''),
     "max_pool_size": 10,  # 连接池最大连接数
     "min_pool_size": 1,
     "socket_timeout": 30000  # 套接字超时时间（毫秒）

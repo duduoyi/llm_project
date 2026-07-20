@@ -18,8 +18,7 @@ class CompanyBaseInfo:
         """
         self.logger = get_logger(self.__class__.__name__)
         # 初始化客户端（懒加载）
-        self._mongo_client = None
-        self._mongo_db = "dquot"
+        self._mongo_db = None
         self._mongo_collection = "company_info"
         self._cos_client = CosSingleton.get_instance()
         self._bucket_name = "company-report-1366204382"
@@ -31,12 +30,12 @@ class CompanyBaseInfo:
         【异步初始化入口】必须await调用！
         完成Mongo异步客户端创建+连通性ping检测
         """
-        if self._mongo_client is not None:
+        if self._mongo_db is not None:
             self.logger.info("Mongo客户端已初始化，跳过")
             return self
 
         self.logger.info("开始初始化异步MongoDB客户端...")
-        self._mongo_client = await AsyncMongoSingleton.get_instance()
+        self._mongo_db = await AsyncMongoSingleton.get_db()
         self.logger.info("MongoDB客户端初始化完成，连通校验成功")
         return self
 
@@ -302,7 +301,7 @@ class CompanyBaseInfo:
                             update_query[field_path] = value
 
                 try:
-                    collection = self._mongo_client[self._mongo_db][self._mongo_collection]
+                    collection = self._mongo_db[self._mongo_collection]
                     # 1. 更新普通字段
                     if update_query:
                         await collection.update_one(

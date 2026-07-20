@@ -18,8 +18,8 @@ class TeacherProfileVector(BaseETLService):
 
     async def extract_batch(self, last_id=None):
         """分批从Mongo读取教师数据（游标分页）"""
-        mongo_client = await AsyncMongoSingleton.get_instance()
-        coll = mongo_client["dquot"]["teacher_profiles"]
+        mongo_db = await AsyncMongoSingleton.get_db()
+        coll = mongo_db["teacher_profiles"]
         filter_query = {}
 
         # 时间范围筛选条件
@@ -149,17 +149,17 @@ class TeacherProfileVector(BaseETLService):
         return True, "success"
 
 # 测试
-async def main():
-    config = {
-        "start_time": None,
-        "end_time": None,
-        "batch_size": 10
-    }
-    service = TeacherProfileVector(config)
-    batch = await service.extract_batch(last_id=0)
-    ok, msg = await service.process_batch(batch)
-    if not ok:
-        print(f"批次处理结果：{ok}, {msg}")
-
-if __name__ == '__main__':
-    asyncio.run(main())
+# async def main():
+#     config = {
+#         "start_time": None,
+#         "end_time": None,
+#         "batch_size": 10
+#     }
+#     service = TeacherProfileVector(config)
+#     batch = await service.extract_batch(last_id=0)
+#     ok, msg = await service.process_batch(batch)
+#     if not ok:
+#         print(f"批次处理结果：{ok}, {msg}")
+#
+# if __name__ == '__main__':
+#     asyncio.run(main())

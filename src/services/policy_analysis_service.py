@@ -23,14 +23,13 @@ class PolicyAnalysisServices:
         self.project_root = Path(__file__).parent.parent.parent
         self.policy_folder = self.project_root / "files" / "policy"
         # 初始化客户端
-        self._mongo_client = None
-        self.db_name = "dquot"
+        self._mongo_db = None
         self.policy_collection_name = "policy"
         self.attachments_collection_name = "attachments"
 
     async def init(self):
         """异步初始化，在 lifespan / 任务启动时调用"""
-        self._mongo_client = await AsyncMongoSingleton.get_instance()
+        self._mongo_db = await AsyncMongoSingleton.get_db()
         self.logger.info("✅ Async Mongo 客户端初始化完成")
 
     async def policy_to_mongodb(self, file_name=None):
@@ -62,8 +61,7 @@ class PolicyAnalysisServices:
         async with self._mongo_write_lock:
             result = await self._save_json_to_mongodb(
                 update_data,
-                collection_name=self.policy_collection_name,
-                db_name=self.db_name
+                collection_name=self.policy_collection_name
             )
         self.logger.info(f"✅ 完成同步：{result} 条数据")
         return result
@@ -73,8 +71,7 @@ class PolicyAnalysisServices:
         async with self._mongo_write_lock:
             # 读取政策集合附件数据
             policy_attachment_list = await self.get_policy_attachments(
-                collection_name=self.policy_collection_name,
-                db_name=self.db_name
+                collection_name=self.policy_collection_name
             )
             # 结构转换
             clear_attachment_list = await asyncio.to_thread(
@@ -84,8 +81,7 @@ class PolicyAnalysisServices:
             # 附件写入
             result = await self._save_json_to_mongodb(
                 clear_attachment_list,
-                collection_name=self.attachments_collection_name,
-                db_name=self.db_name
+                collection_name=self.attachments_collection_name
             )
         self.logger.info(f"✅ 政策附件同步完成：{result}")
         return result
@@ -256,8 +252,8 @@ class PolicyAnalysisServices:
             result.append(data)
         return result
 
-    async def get_policy_attachments(self, collection_name: str, db_name: str = "dquot"):
-        collection = self._mongo_client[db_name][collection_name]
+    async def get_policy_attachments(self, collection_name: str):
+        collection = self._mongo_db[collection_name]
         pipeline = [
             # 只筛选 sourceFile 非空数组、不为null的文档
             {"$match": {"sourceFile": {"$exists": True, "$ne": []}}},
@@ -319,8 +315,7 @@ class PolicyAnalysisServices:
     async def _save_json_to_mongodb(
             self,
             policy_list: list,
-            collection_name: str,
-            db_name: str = "dquot"
+            collection_name: str
     ):
         """
         存储JSON到MongoDB
@@ -328,7 +323,7 @@ class PolicyAnalysisServices:
         只更新/新增字段，旧字段 100% 保留
         特别处理：企业基本信息 只新增不存在的键，不覆盖已有键
         """
-        collection = self._mongo_client[db_name][collection_name]
+        collection = self._mongo_db[collection_name]
 
         try:
             if not policy_list:

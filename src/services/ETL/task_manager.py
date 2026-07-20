@@ -60,27 +60,27 @@ class TaskManager:
                 for _ in range(self.consumer_workers)  # 并发个数
             ]
 
-        try:
-            # producer
-            await producer
+            try:
+                # producer
+                await producer
 
-            # 等待队列清空
-            await queue.join()
+                # 等待队列清空
+                await queue.join()
 
-            # 通知 consumers 退出
-            for _ in range(self.consumer_workers):
-                await queue.put(None)
-            for c in consumers:
-                await c
+                # 通知 consumers 退出
+                for _ in range(self.consumer_workers):
+                    await queue.put(None)
+                for c in consumers:
+                    await c
 
-            await run_repo.update_status(run_id, "completed")
-            self.logger.info(f"{run_id} ETL流程完成")
+                await run_repo.update_status(run_id, "completed")
+                self.logger.info(f"{run_id} ETL流程完成")
 
-        except Exception as e:
-            stop_event.set()
-            await run_repo.update_status(run_id, "failed")
-            self.logger.error(f"{run_id} ETL流程失败: {str(e)}", exc_info=True)
-            raise
+            except Exception as e:
+                stop_event.set()
+                await run_repo.update_status(run_id, "failed")
+                self.logger.error(f"{run_id} ETL流程失败: {str(e)}", exc_info=True)
+                raise
 
     async def _producer(self, queue: asyncio.Queue, stop_event: asyncio.Event, run_id: str, service, batch_repo):
         """生产者按批提取数据放入队列"""
@@ -96,12 +96,14 @@ class TaskManager:
         while not stop_event.is_set():
             self.logger.debug(f"按批提取数据放入队列：batch_no={batch_no}, last_id={last_id}")
             batch_data = await service.extract_batch(last_id)
-
+            if not batch_data:
+                self.logger.info(f"{run_id} 无待提取数据，生产者退出")
+                break
             if not batch_data:
                 break
 
-            # 🔥 背压关键点
-            await queue.put((batch_no, batch_data))
+
+            # 先持久化批次断点，再放入队列，避免阻塞丢失记录
             raw_last_id = batch_data[-1]["id"]
             # 创建 batch_checkpoint
             await batch_repo.create(
@@ -110,7 +112,8 @@ class TaskManager:
                 raw_last_id,
                 len(batch_data)
             )
-
+            # 🔥 背压关键点
+            await queue.put((batch_no, batch_data))
             last_id = raw_last_id
             batch_no += 1
 
@@ -130,7 +133,7 @@ class TaskManager:
             if batch_status == "completed":
                 self.logger.debug(f"{run_id}_{batch_no}批次数据转换加载完成")
                 queue.task_done()
-                return
+                continue
 
             try:
                 await batch_repo.update_status(run_id, batch_no, "running")
@@ -155,7 +158,7 @@ class TaskManager:
         run_repo, batch_repo = self._get_repos(service)
         self.logger.info(f"{run_id} 开始重跑失败批次")
 
-        failed_batches = batch_repo.get_failed_batches(run_id)
+        failed_batches = await batch_repo.get_failed_batches(run_id)
 
         if not failed_batches:
             self.logger.info(f"{run_id} 没有失败批次")

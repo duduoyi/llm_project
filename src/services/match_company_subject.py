@@ -16,8 +16,7 @@ class MatchCompanySubject:
         self.logger = get_logger(self.__class__.__name__)
         self.max_workers = max_workers
         # 异步客户端延后init初始化
-        self._mongo_client = None
-        self.db_name = "dquot"
+        self._mongo_db = None
         self.university_coll_name = "university_group_info"
         self.company_coll_name = "company_info"
         # 初始化大模型（需支持ainvoke异步调用）
@@ -25,11 +24,11 @@ class MatchCompanySubject:
 
     async def init(self):
         """异步初始化Mongo连接（必须await调用）"""
-        self._mongo_client = await AsyncMongoSingleton.get_instance()
+        self._mongo_db = await AsyncMongoSingleton.get_db()
         self.logger.info("✅ MatchCompanySubject Mongo异步客户端初始化完成")
 
     async def match_company_college(self):
-        if self._mongo_client is None:
+        if self._mongo_db is None:
             raise RuntimeError("请先执行 await service.init() 初始化Mongo客户端！")
 
         self.logger.info(f"开始异步批量处理企业学院匹配 | LLM最大并发: {self.max_workers}")
@@ -136,7 +135,7 @@ class MatchCompanySubject:
             },
             {"$project": {"_id": 0}}
         ]
-        university_coll = self._mongo_client[self.db_name][self.university_coll_name]
+        university_coll = self._mongo_db[self.university_coll_name]
         cursor = university_coll.aggregate(pipeline)
         data_list = await cursor.to_list(length=1)
         return data_list[0] if data_list else {}
@@ -156,7 +155,7 @@ class MatchCompanySubject:
             }},
             # {"$limit": 1}
         ]
-        company_coll = self._mongo_client[self.db_name][self.company_coll_name]
+        company_coll = self._mongo_db[self.company_coll_name]
         cursor = company_coll.aggregate(pipeline)
         return await cursor.to_list(length=None)
 
@@ -181,7 +180,7 @@ class MatchCompanySubject:
             {"$replaceRoot": {"newRoot": "$_id"}},
             {"$sort": {"university": 1, "college": 1}}
         ]
-        university_coll = self._mongo_client[self.db_name][self.university_coll_name]
+        university_coll = self._mongo_db[self.university_coll_name]
         cursor = university_coll.aggregate(pipeline)
         return await cursor.to_list(length=None)
 
@@ -191,7 +190,7 @@ class MatchCompanySubject:
             match_university: list
     ) -> dict:
         try:
-            company_coll = self._mongo_client[self.db_name][self.company_coll_name]
+            company_coll = self._mongo_db[self.company_coll_name]
             result = await company_coll.update_one(
                 {"_id": company_name},
                 {"$set": {"可合作高校学院": match_university}},

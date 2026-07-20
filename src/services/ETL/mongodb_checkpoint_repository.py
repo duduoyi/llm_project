@@ -9,14 +9,14 @@ class MongoRunRepo(BaseRunRepo):
 
     def __init__(self):
         # 获取异步session工厂（lifespan已全局预热）
-        self.mongo_client = None
+        self.mongo_db = None
         self._lock = asyncio.Lock()  # 增加异步锁
 
     async def _get_collection(self):
         async with self._lock:
-            if self.mongo_client is None:
-                self.mongo_client = await AsyncMongoSingleton.get_instance()
-            coll = self.mongo_client["dquot"]["etl_run"]
+            if self.mongo_db is None:
+                self.mongo_db = await AsyncMongoSingleton.get_db()
+            coll = self.mongo_db["etl_run"]
             return coll
 
     async def create(self, run_id: str):
@@ -53,14 +53,14 @@ class MongoBatchRepo(BaseBatchRepo):
     """Mongo etl_batch_checkpoint"""
     def __init__(self):
         # 获取异步session工厂（lifespan已全局预热）
-        self.mongo_client = None
+        self.mongo_db = None
         self._lock = asyncio.Lock()  # 增加异步锁
 
     async def _get_collection(self):
         async with self._lock:
-            if self.mongo_client is None:
-                self.mongo_client = await AsyncMongoSingleton.get_instance()
-            coll = self.mongo_client["dquot"]["etl_batch_checkpoint"]
+            if self.mongo_db is None:
+                self.mongo_db = await AsyncMongoSingleton.get_db()
+            coll = self.mongo_db["etl_batch_checkpoint"]
             return coll
 
     async def create(self, run_id: str, batch_no: int, last_id, batch_size: int):

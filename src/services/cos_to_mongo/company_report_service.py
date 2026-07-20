@@ -32,8 +32,7 @@ class CompanyReportServices:
         self.max_workers = max_workers
 
         # 初始化客户端（懒加载）
-        self._mongo_client = None
-        self._mongo_db = "dquot"
+        self._mongo_db = None
         self._mongo_collection = "company_info"
         self._llm_client = LLMFactory.get_instance('qwen')
         self._cos_client = CosSingleton.get_instance()
@@ -44,12 +43,12 @@ class CompanyReportServices:
         【异步初始化入口】必须await调用！
         完成Mongo异步客户端创建+连通性ping检测
         """
-        if self._mongo_client is not None:
+        if self._mongo_db is not None:
             self.logger.info("Mongo客户端已初始化，跳过")
             return self
 
         self.logger.info("开始初始化异步MongoDB客户端...")
-        self._mongo_client = await AsyncMongoSingleton.get_instance()
+        self._mongo_db = await AsyncMongoSingleton.get_db()
         self.logger.info("MongoDB客户端初始化完成，连通校验成功")
         return self
 
@@ -63,7 +62,7 @@ class CompanyReportServices:
         :return: 处理结果汇总
         """
         # 防御性校验，防止忘记调用init()
-        if self._mongo_client is None:
+        if self._mongo_db is None:
             raise RuntimeError("请先执行 await service.init() 初始化Mongo客户端！")
 
         self.logger.info(f"开始异步批量处理 | LLM最大并发: {self.max_workers} | 源目录: {source_prefix}")
@@ -337,7 +336,7 @@ class CompanyReportServices:
         异步安全版：检查MongoDB记录是否存在
         """
         try:
-            collection = self._mongo_client[self._mongo_db][self._mongo_collection]
+            collection = self._mongo_db[self._mongo_collection]
 
             record = await collection.find_one({
                 "_metadata.mda_file": mda_file_key
@@ -550,7 +549,7 @@ class CompanyReportServices:
         """
         async with self._mongo_write_lock:
             try:
-                collection = self._mongo_client[self._mongo_db][self._mongo_collection]
+                collection = self._mongo_db[self._mongo_collection]
 
                 # 固定使用 _id 作为唯一键
                 if "_id" in json_data:

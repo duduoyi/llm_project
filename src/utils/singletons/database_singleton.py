@@ -1,7 +1,8 @@
 from typing import Dict, Optional, Any
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from qdrant_client import AsyncQdrantClient
-from src.config.database import QDRANT_CONFIG
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from src.config.database import MONGODB_CONFIG, QDRANT_CONFIG
 
 class AsyncNeo4jSingleton:
     """Neo4j 异步单例：缓存 AsyncDriver，不缓存session"""
@@ -40,12 +41,12 @@ class AsyncNeo4jSingleton:
 class AsyncMongoSingleton:
     """Mongo 异步单例 motor"""
     _client: Optional["AsyncIOMotorClient"] = None
+    _db: Optional["AsyncIOMotorDatabase"] = None
 
     @classmethod
     async def get_instance(cls):
         if cls._client is None:
-            from motor.motor_asyncio import AsyncIOMotorClient
-            from src.config.database import MONGODB_CONFIG
+
             config = MONGODB_CONFIG
             if config.get("user") and config.get("password"):
                 uri = (
@@ -70,6 +71,16 @@ class AsyncMongoSingleton:
                 cls._client = None
                 raise ConnectionError("MongoDB连接失败") from e
         return cls._client
+
+    @classmethod
+    async def get_db(cls) -> AsyncIOMotorDatabase:
+        """获取配置中指定的数据库实例（MONGODB_DATABASE）"""
+        if cls._db is None:
+            client = await cls.get_instance()
+            from src.config.database import MONGODB_CONFIG
+            db_name = MONGODB_CONFIG["database"]
+            cls._db = client[db_name]
+        return cls._db
 
     @classmethod
     async def close(cls):

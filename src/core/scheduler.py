@@ -1,7 +1,7 @@
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-# 使用上海时区全局统一
-scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
-
+# 全局异步调度器
+scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+# 对外导出CronTrigger保持原有业务代码不变
 __all__ = ["scheduler", "CronTrigger"]

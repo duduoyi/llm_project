@@ -14,15 +14,15 @@ class UniversityGroupInfo:
     def __init__(self):
         self.logger = get_logger(self.__class__.__name__)
         self.neo4j_client = None
-        self._mongo_client = None
+        self._mongo_db = None
         self.collection = None
 
     async def init(self):
         """异步初始化，在 lifespan 或者任务启动时调用"""
         self.neo4j_client = await AsyncNeo4jSingleton.get_driver()
         self.logger.info("✅ Neo4j 异步客户端初始化完成")
-        self._mongo_client = await AsyncMongoSingleton.get_instance()
-        self.collection = self._mongo_client['dquot']['university_group_info']
+        self._mongo_db = await AsyncMongoSingleton.get_db()
+        self.collection = self._mongo_db['university_group_info']
         self.logger.info("✅ Mongo 异步集合初始化完成")
 
     async def get_community_info(self):

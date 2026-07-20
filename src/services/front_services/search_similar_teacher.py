@@ -4,6 +4,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 class SearchSimilarTeacherService:
     def __init__(self):
+        self.mongo_collection = "teacher_profiles"
         self.qdrant_coll = "teacher_profile"
         self.score_threshold = 0.7
 
@@ -66,33 +67,33 @@ class SearchSimilarTeacherService:
 
             return mongo_id_list
 
-    # async def get_teacher_by_mongo_ids(self, mongo_id_list):
-    #     """
-    #     根据mongo_id列表批量查询mongodb文档
-    #     :param mongo_id_list: qdrant中取出的payload.mongo_id 字符串列表
-    #     :return: mongodb完整文档列表
-    #     """
-    #     if not mongo_id_list:
-    #         return []
-    #
-    #     from src.utils.singletons.database_singleton import AsyncMongoSingleton
-    #     from bson import ObjectId
-    #     mongo_client = await AsyncMongoSingleton.get_instance()
-    #     coll = mongo_client[self.mongo_dbname][self.mongo_collection]
-    #
-    #     #mongo_id 是字符串，对应 mongo _id(ObjectId)，必须转ObjectId
-    #     try:
-    #         obj_id_list = [ObjectId(mid) for mid in mongo_id_list]
-    #     except Exception as e:
-    #         raise ValueError(f"非法mongo_id，无法转为ObjectId: {e}")
-    #
-    #     filter_query = {"_id": {"$in": obj_id_list}}
-    #
-    #     # 批量查询
-    #     cursor = coll.find(filter_query)
-    #     docs = await cursor.to_list(length=None)
-    #
-    #     return docs
+    async def get_teacher_by_mongo_ids(self, mongo_id_list):
+        """
+        根据mongo_id列表批量查询mongodb文档
+        :param mongo_id_list: qdrant中取出的payload.mongo_id 字符串列表
+        :return: mongodb完整文档列表
+        """
+        if not mongo_id_list:
+            return []
+
+        from src.utils.singletons.database_singleton import AsyncMongoSingleton
+        from bson import ObjectId
+        mongo_db = await AsyncMongoSingleton.get_db()
+        coll = mongo_db[self.mongo_collection]
+
+        #mongo_id 是字符串，对应 mongo _id(ObjectId)，必须转ObjectId
+        try:
+            obj_id_list = [ObjectId(mid) for mid in mongo_id_list]
+        except Exception as e:
+            raise ValueError(f"非法mongo_id，无法转为ObjectId: {e}")
+
+        filter_query = {"_id": {"$in": obj_id_list}}
+
+        # 批量查询
+        cursor = coll.find(filter_query)
+        docs = await cursor.to_list(length=None)
+
+        return docs
 
 # # ===================== 异步测试入口 =====================
 # async def main():

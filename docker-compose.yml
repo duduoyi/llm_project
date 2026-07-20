@@ -1,8 +1,8 @@
 services:
   fastapi-app:
     # 核心：直接指定本地已有的镜像（替换为你的镜像名:标签）
-    image: fastapi-etl # 必须与本地已构建的镜像名一致
-    container_name: my-fastapi-etl  # 固定容器名，方便管理
+    image: fastapi-etl:v2.0.0  # 必须与本地已构建的镜像名一致
+    container_name: my-fastapi-etl-pro  # 固定容器名，方便管理
 #    restart: unless-stopped  # 容器退出后自动重启（除非手动停止）
     ports:
       - "8000:8001"  # 端口映射：宿主机8000 → 容器8001
@@ -15,12 +15,12 @@ services:
       - ./logs:/app/logs
       - ./temp:/app/temp
       - ./files:/app/files
-      - ./.env.development:/app/.env.development
+      - ./.env.development:/app/.env.production
     environment:
-      - ENVIRONMENT=development
+      - ENVIRONMENT=production
     env_file:
       - .env
-      - .env.development
+      - .env.production
     user: "fastapi"  # 与镜像中创建的非root用户一致（需提前在Dockerfile中配置）
     networks:
       - etl-network  # 与声明的外部网络名一致
