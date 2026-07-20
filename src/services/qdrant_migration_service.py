@@ -3,6 +3,7 @@ from src.utils.singletons.database_singleton import AsyncQdrantSingleton
 from src.utils.logger import get_logger
 from src.utils.storage_manager import get_storage
 from typing import Optional
+from src.config.database import QDRANT_CONFIG, QDRANT_PRODUCTION_CONFIG
 
 
 class QdrantMigrationService:
@@ -21,8 +22,8 @@ class QdrantMigrationService:
 
     async def init(self):
         """异步初始化，在 lifespan 或者任务启动时调用"""
-        self.dev_qdrant_client = await AsyncQdrantSingleton.get_instance("development")
-        self.pro_qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+        self.dev_qdrant_client = await AsyncQdrantSingleton.get_instance(QDRANT_CONFIG)
+        self.pro_qdrant_client = await AsyncQdrantSingleton.get_instance(QDRANT_PRODUCTION_CONFIG)
         self.logger.info("✅ Qdrant 异步客户端初始化完成")
 
     async def export_qdrant_data(self, old_collection: str):

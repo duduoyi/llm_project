@@ -108,7 +108,7 @@ class QdrantCompanyPatent(BaseETLService):
         # 3. Qdrant入库
         collection_name = "patent_test"
         # Qdrant 异步客户端
-        qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+        qdrant_client = await AsyncQdrantSingleton.get_instance()
         # 原生异步API
         exists = await qdrant_client.collection_exists(collection_name)
         if not exists:

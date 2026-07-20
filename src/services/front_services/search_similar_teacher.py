@@ -8,7 +8,7 @@ class SearchSimilarTeacherService:
         self.score_threshold = 0.7
 
     async def search_vector(self, mongo_id: str, top_k = 20):
-        qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+        qdrant_client = await AsyncQdrantSingleton.get_instance()
         # 1. 根据 payload.mongo_id 找到目标向量
         search_target = await qdrant_client.scroll(
             collection_name=self.qdrant_coll,

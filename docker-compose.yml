@@ -16,6 +16,8 @@ services:
       - ./temp:/app/temp
       - ./files:/app/files
       - ./.env.development:/app/.env.development
+    environment:
+      - ENVIRONMENT=development
     env_file:
       - .env
       - .env.development

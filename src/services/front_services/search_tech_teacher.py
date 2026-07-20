@@ -25,7 +25,7 @@ class SearchTechTeacherService:
             ]
         )
 
-        qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+        qdrant_client = await AsyncQdrantSingleton.get_instance()
         # 3. 执行向量检索
         resp = await qdrant_client.query_points(
             collection_name=self.qdrant_coll,

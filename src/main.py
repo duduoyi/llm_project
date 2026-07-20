@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
         # logger.info("✅ Neo4j 异步驱动预热完成")
 
         # 3. Qdrant development 向量库客户端
-        await AsyncQdrantSingleton.get_instance("development")
+        await AsyncQdrantSingleton.get_instance()
         logger.info("✅ Qdrant development 客户端预热完成")
 
         # 4. MongoDB 异步连接
@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
         # await AsyncMysqlSingleton.close_all()
         # await AsyncNeo4jSingleton.close()
         await AsyncMongoSingleton.close()
-        await AsyncQdrantSingleton.close_all()
+        await AsyncQdrantSingleton.close()
         logger.info("✅ 全部异步数据库连接已正常关闭")
     except Exception as e:
         logger.error(f"关闭数据库资源异常: {str(e)}", exc_info=True)

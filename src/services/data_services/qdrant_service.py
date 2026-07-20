@@ -17,7 +17,7 @@ class QdrantService:
 
     async def init(self):
         """异步初始化，在 lifespan 或者任务启动时调用"""
-        self.qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+        self.qdrant_client = await AsyncQdrantSingleton.get_instance()
         self.logger.info("✅ Qdrant 异步客户端初始化完成")
 
     async def create_collection(
@@ -202,13 +202,13 @@ class QdrantService:
                 raise
 
 
-# # ===================== 异步测试入口 =====================
-# async def main():
-#     service = QdrantService()
-#     await service.init()
-#     await service.create_collection("teacher_profile")
-#
-#
-# if __name__ == "__main__":
-#     import asyncio
-#     asyncio.run(main())
+# ===================== 异步测试入口 =====================
+async def main():
+    service = QdrantService()
+    await service.init()
+    await service.create_collection("teacher_profile")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

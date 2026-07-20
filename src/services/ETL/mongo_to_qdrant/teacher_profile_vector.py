@@ -135,7 +135,7 @@ class TeacherProfileVector(BaseETLService):
         # ========== Qdrant写入，加全局锁 ==========
         async with self._global_qdrant_lock:
             qdrant_collection = 'teacher_profile'
-            qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+            qdrant_client = await AsyncQdrantSingleton.get_instance()
             exist_flag = await qdrant_client.collection_exists(qdrant_collection)
             if not exist_flag:
                 self.logger.error(f"Qdrant集合 {qdrant_collection} 不存在！请先创建集合")

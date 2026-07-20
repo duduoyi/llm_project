@@ -1,6 +1,7 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
+from qdrant_client import AsyncQdrantClient
+from src.config.database import QDRANT_CONFIG
 
 class AsyncNeo4jSingleton:
     """Neo4j 异步单例：缓存 AsyncDriver，不缓存session"""
@@ -122,41 +123,41 @@ class AsyncMysqlSingleton:
 
 
 class AsyncQdrantSingleton:
-    """Qdrant 异步客户端单例，区分生产/测试环境"""
-    _instances: Dict[Optional[str], "AsyncQdrantClient"] = {}
+    """Qdrant 异步客户端全局单例，单一向量库实例"""
+    _client: Optional[AsyncQdrantClient] = None
 
     @classmethod
-    async def get_instance(cls, qdrant_type: str = None):
-        if qdrant_type not in cls._instances:
-            from qdrant_client import AsyncQdrantClient
-            from src.config.database import QDRANT_CONFIG, QDRANT_PRODUCTION_CONFIG
-            if qdrant_type == "production":
-                cfg = QDRANT_PRODUCTION_CONFIG
-            else:
-                cfg = QDRANT_CONFIG
-            client = AsyncQdrantClient(
-                host=cfg["host"],
-                port=cfg["port"],
-                api_key=cfg["api_key"],
-                https=cfg.get("https", False),
-                prefer_grpc=cfg.get("prefer_grpc", False),
-                timeout=cfg.get("timeout", 300)
+    async def get_instance(
+        cls,
+        cfg: Optional[Dict[str, Any]] = None
+    ) -> AsyncQdrantClient:
+        if cls._client is None:
+            # 传入cfg不为空则使用传入配置，否则用默认全局配置
+            use_cfg = cfg if cfg is not None else QDRANT_CONFIG
+            cls._client = AsyncQdrantClient(
+                host=use_cfg["host"],
+                port=use_cfg["port"],
+                api_key=use_cfg["api_key"],
+                https=use_cfg.get("https", False),
+                prefer_grpc=use_cfg.get("prefer_grpc", False),
+                timeout=use_cfg.get("timeout", 300)
             )
             # Qdrant连通测试
             try:
-                await client.get_collections()
+                await cls._client.get_collections()
             except Exception as e:
-                await client.close()
-                raise ConnectionError(f"Qdrant[{qdrant_type or 'default'}] 连接测试失败") from e
+                await cls._client.close()
+                cls._client = None  # 连接失败清空实例，避免残留失效客户端
+                raise ConnectionError("Qdrant连接测试失败") from e
 
-            cls._instances[qdrant_type] = client
-        return cls._instances[qdrant_type]
+        return cls._client
 
     @classmethod
-    async def close_all(cls):
-        for cli in cls._instances.values():
-            await cli.close()
-        cls._instances.clear()
+    async def close(cls):
+        """关闭唯一客户端连接并清空实例"""
+        if cls._client is not None:
+            await cls._client.close()
+            cls._client = None
 
 # 无异步接口
 class CosSingleton:

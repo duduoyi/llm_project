@@ -78,7 +78,7 @@ class QdrantUniversityPatentPayload(BaseETLService):
 
             # ===================== 3. 存储到qdrant中 ====================
             collection_name = "patent_test"
-            qdrant_client = await AsyncQdrantSingleton.get_instance("development")
+            qdrant_client = await AsyncQdrantSingleton.get_instance()
             # 检查集合是否已存在
             if await qdrant_client.collection_exists(collection_name):
                 # 批量获取point的存在性（仅查询ID，不返回向量/payload）
