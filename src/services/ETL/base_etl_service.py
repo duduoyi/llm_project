@@ -2,14 +2,15 @@ import abc
 from typing import Dict, Any
 from src.utils.logger import get_logger
 from src.utils.tz_time import get_current_year_start_str, get_next_year_start_str
+from src.services.base_resource_service import BaseResourceService
 
-
-class BaseETLService(metaclass=abc.ABCMeta):
+class BaseETLService(BaseResourceService):
     """
     所有 ETL Service 必须继承这个基类
     """
 
-    name: str = None  # 每个子类必须定义
+    name: str = None  # 每个子类必须定义服务名
+    source_type: str = None  # 每个子类必须定义数据源
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config or {}
@@ -32,7 +33,9 @@ class BaseETLService(metaclass=abc.ABCMeta):
         pass
 
 
-class BaseRunRepo(metaclass=abc.ABCMeta):
+
+
+class BaseRunRepo(BaseResourceService):
     """ETL 任务主记录仓库抽象（ods_etl_run）"""
     @abc.abstractmethod
     async def create(self, run_id: str):
@@ -41,8 +44,10 @@ class BaseRunRepo(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     async def update_status(self, run_id: str, status: str):
         pass
-    
-class BaseBatchRepo(metaclass=abc.ABCMeta):
+
+
+
+class BaseBatchRepo(BaseResourceService):
     @abc.abstractmethod
     async def create(self, run_id: str, batch_no: int, last_id, batch_size: int):
         ...

@@ -1,29 +1,15 @@
-import asyncio
-from src.utils.singletons.database_singleton import AsyncNeo4jSingleton, AsyncMongoSingleton
+from src.services.base_resource_service import BaseResourceService
 from src.utils.logger import get_logger
 
 
 # ========================= 高校团队 ===========================
-class UniversityGroupInfo:
+class UniversityGroupInfo(BaseResourceService):
     """
     高校团队上传到 Mongodb
     """
-    # 全局异步互斥锁：与 Neo4j 写/删/图计算任务互斥，避免数据读写并发错乱
-    _global_neo4j_lock = asyncio.Lock()
-
     def __init__(self):
         self.logger = get_logger(self.__class__.__name__)
-        self.neo4j_client = None
-        self._mongo_db = None
-        self.collection = None
-
-    async def init(self):
-        """异步初始化，在 lifespan 或者任务启动时调用"""
-        self.neo4j_client = await AsyncNeo4jSingleton.get_driver()
-        self.logger.info("✅ Neo4j 异步客户端初始化完成")
-        self._mongo_db = await AsyncMongoSingleton.get_db()
-        self.collection = self._mongo_db['university_group_info']
-        self.logger.info("✅ Mongo 异步集合初始化完成")
+        self.collection = 'university_group_info'
 
     async def get_community_info(self):
         group_cypher = """
@@ -69,13 +55,15 @@ class UniversityGroupInfo:
                 community_patent_count,  // ✅ 精准总数
                 collect(scholar_name + '(' + toString(per_patent_count) + ')') AS scholar_list
         """
-        group_result = await self.neo4j_client.run(group_cypher)
-        self.logger.info(f"高效团队获取完成")
-        # 将Neo4j结果 → 标准JSON格式（关键）
+        neo4j_driver = await self.get_neo4j_driver()
         result_data = []
-        async for record in group_result:
-            # 把每条记录转成字典
-            result_data.append(record.data())
+        async with neo4j_driver.session() as session:
+            group_result = await session.run(group_cypher)
+            # 迭代读取必须在session存活范围内
+            async for record in group_result:
+                result_data.append(record.data())
+
+        self.logger.info(f"高效团队获取完成")
         self.logger.info(f"共获取到 {len(result_data)} 条高校团队数据")
         return result_data
 
@@ -89,7 +77,9 @@ class UniversityGroupInfo:
                 continue
 
             # 只有需要更新时才执行
-            await self.collection.update_one(
+            mongo_db = await self.get_mongo_db()
+            coll = mongo_db[self.collection]
+            await coll.update_one(
                 {"_id": group_name},
                 {"$set": item},
                 upsert=True
@@ -99,24 +89,22 @@ class UniversityGroupInfo:
         return success
 
     async def pipline(self):
-        async with self._global_neo4j_lock:
-            group_info = await self.get_community_info()
-            if not group_info:
-                self.logger.warning("未获取到高校团队数据")
-                return
+        group_info = await self.get_community_info()
+        if not group_info:
+            self.logger.warning("未获取到高校团队数据")
+            return
 
-            save_result = await self.save_to_mongodb(group_info)
-            self.logger.info(f"高校团队上传MongoDB完成，共 {save_result} 条")
-
-
-# ===================== 异步测试入口 =====================
-async def main():
-    service = UniversityGroupInfo()
-    await service.init()
-    await service.pipeline()
+        save_result = await self.save_to_mongodb(group_info)
+        self.logger.info(f"高校团队上传MongoDB完成，共 {save_result} 条")
 
 
-if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+# # ===================== 异步测试入口 =====================
+# async def main():
+#     service = UniversityGroupInfo()
+#     await service.pipeline()
+#
+#
+# if __name__ == '__main__':
+#     import asyncio
+#     asyncio.run(main())
 

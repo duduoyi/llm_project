@@ -23,7 +23,7 @@ class Neo4jDataProcess(str, Enum):
 
 
 @router.post("/{process_type}")
-def run_neo4j_data_process(
+async def run_neo4j_data_process(
         process_type: Neo4jDataProcess
 ):
     # 核心：根据枚举值动态调用 neo4j_service 里的同名方法
@@ -35,7 +35,7 @@ def run_neo4j_data_process(
 
         # 动态调用！！！
         func = getattr(neo4j_service, method_name)
-        result = func()  # 如果需要传参，写 func(参数1, 参数2...)
+        result = await func()  # 如果需要传参，写 func(参数1, 参数2...)
         return JSONResponse(
             content={
                 "status": "success",

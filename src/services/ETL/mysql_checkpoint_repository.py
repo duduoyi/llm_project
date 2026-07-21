@@ -1,5 +1,3 @@
-import asyncio
-from src.utils.singletons.database_singleton import AsyncMysqlSingleton
 from src.config.mysql_patent_orm import OdsETLRun, OdsETLBatchCheckpoint
 from src.services.ETL.base_etl_service import BaseRunRepo, BaseBatchRepo
 from sqlalchemy import select, update
@@ -7,19 +5,9 @@ from src.utils.tz_time import get_current_str
 
 
 class MysqlRunRepo(BaseRunRepo):
-    def __init__(self):
-        # 获取异步session工厂（lifespan已全局预热）
-        self.session_factory = None
-        self._lock = asyncio.Lock()  # 增加异步锁
-
-    async def _get_factory(self):
-        async with self._lock:
-            if self.session_factory is None:
-                self.session_factory = await AsyncMysqlSingleton.get_session("patent")
-            return self.session_factory
 
     async def create(self, run_id):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLRun).where(OdsETLRun.run_id == run_id)
             res = await session.execute(stmt)
@@ -38,7 +26,7 @@ class MysqlRunRepo(BaseRunRepo):
             await session.commit()
 
     async def update_status(self, run_id, status):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = (
                 update(OdsETLRun)
@@ -49,20 +37,8 @@ class MysqlRunRepo(BaseRunRepo):
             await session.commit()
 
 class MysqlBatchRepo(BaseBatchRepo):
-
-    def __init__(self):
-        # 获取异步session工厂（lifespan已全局预热）
-        self.session_factory = None
-        self._lock = asyncio.Lock()  # 增加异步锁
-
-    async def _get_factory(self):
-        async with self._lock:
-            if self.session_factory is None:
-                self.session_factory = await AsyncMysqlSingleton.get_session("patent")
-            return self.session_factory
-
     async def create(self, run_id, batch_no, last_id, batch_size: int):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLBatchCheckpoint).where(
                 OdsETLBatchCheckpoint.run_id == run_id,
@@ -87,7 +63,7 @@ class MysqlBatchRepo(BaseBatchRepo):
             await session.commit()
 
     async def update_status(self, run_id: str, batch_no: int, status: str):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = (
                 update(OdsETLBatchCheckpoint)
@@ -101,7 +77,7 @@ class MysqlBatchRepo(BaseBatchRepo):
             await session.commit()
 
     async def mark_failed(self, run_id, batch_no):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLBatchCheckpoint).where(
                 OdsETLBatchCheckpoint.run_id == run_id,
@@ -128,7 +104,7 @@ class MysqlBatchRepo(BaseBatchRepo):
             await session.commit()
 
     async def get_status(self, run_id, batch_no):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLBatchCheckpoint).where(
                 OdsETLBatchCheckpoint.run_id == run_id,
@@ -139,7 +115,7 @@ class MysqlBatchRepo(BaseBatchRepo):
             return row.status if row else None
 
     async def get_last_completed(self, run_id: str):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLBatchCheckpoint).where(
                 OdsETLBatchCheckpoint.run_id == run_id,
@@ -157,7 +133,7 @@ class MysqlBatchRepo(BaseBatchRepo):
             }
 
     async def get_failed_batches(self, run_id):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLBatchCheckpoint).where(
                 OdsETLBatchCheckpoint.run_id == run_id,
@@ -179,7 +155,7 @@ class MysqlBatchRepo(BaseBatchRepo):
             return result
 
     async def get_previous_batch(self, run_id, batch_no):
-        factory = await self._get_factory()
+        factory = await self.get_mysql_session_factory("patent")
         async with factory() as session:
             stmt = select(OdsETLBatchCheckpoint).where(
                 OdsETLBatchCheckpoint.run_id == run_id,
@@ -195,13 +171,3 @@ class MysqlBatchRepo(BaseBatchRepo):
                 "batch_no": sorted_list_desc[0].batch_no,
                 "last_id": sorted_list_desc[0].last_id
             }
-
-
-# if __name__ == '__main__':
-    # run_repo = ETLRunRepo()
-    # run_id = "Mysql2QdrantTypes.update_payload_56b01e9a"
-    # run_repo.create(run_id)
-    # run_repo.update_status(run_id, "completed")
-
-    # batch_repo = BatchRepo()
-    # batch_repo.update_status(run_id, 454, "completed")

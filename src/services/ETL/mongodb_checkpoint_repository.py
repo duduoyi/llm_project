@@ -1,23 +1,13 @@
-import asyncio
-from src.utils.singletons.database_singleton import AsyncMongoSingleton
 from src.services.ETL.base_etl_service import BaseRunRepo, BaseBatchRepo
 from src.utils.tz_time import get_current_str
 
 
 class MongoRunRepo(BaseRunRepo):
     """新增：Mongo存储etl_run"""
-
-    def __init__(self):
-        # 获取异步session工厂（lifespan已全局预热）
-        self.mongo_db = None
-        self._lock = asyncio.Lock()  # 增加异步锁
-
     async def _get_collection(self):
-        async with self._lock:
-            if self.mongo_db is None:
-                self.mongo_db = await AsyncMongoSingleton.get_db()
-            coll = self.mongo_db["etl_run"]
-            return coll
+        mongo_db = await self.get_mongo_db()
+        coll = mongo_db["etl_run"]
+        return coll
 
     async def create(self, run_id: str):
         coll = await self._get_collection()
@@ -51,17 +41,10 @@ class MongoRunRepo(BaseRunRepo):
 
 class MongoBatchRepo(BaseBatchRepo):
     """Mongo etl_batch_checkpoint"""
-    def __init__(self):
-        # 获取异步session工厂（lifespan已全局预热）
-        self.mongo_db = None
-        self._lock = asyncio.Lock()  # 增加异步锁
-
     async def _get_collection(self):
-        async with self._lock:
-            if self.mongo_db is None:
-                self.mongo_db = await AsyncMongoSingleton.get_db()
-            coll = self.mongo_db["etl_batch_checkpoint"]
-            return coll
+        mongo_db = await self.get_mongo_db()
+        coll = mongo_db["etl_batch_checkpoint"]
+        return coll
 
     async def create(self, run_id: str, batch_no: int, last_id, batch_size: int):
         coll = await self._get_collection()
@@ -128,16 +111,3 @@ class MongoBatchRepo(BaseBatchRepo):
         ).sort("batch_no", -1).limit(1)
         rows = await cursor.to_list(length=1)
         return rows[0] if rows else None
-
-
-
-# if __name__ == '__main__':
-    # run_repo = ETLRunRepo()
-    # run_id = "Mysql2QdrantTypes.update_payload_56b01e9a"
-    # run_repo.create(run_id)
-    # run_repo.update_status(run_id, "completed")
-
-    # batch_repo = BatchRepo()
-    # batch_repo.update_status(run_id, 454, "completed")
-
-

@@ -1,8 +1,53 @@
 from typing import Dict, Optional, Any
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from qdrant_client import AsyncQdrantClient
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncEngine
+from sqlalchemy import text
+from neo4j import AsyncDriver
+from neo4j import AsyncGraphDatabase
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from src.config.database import MONGODB_CONFIG, QDRANT_CONFIG
+from qdrant_client import AsyncQdrantClient
+from qcloud_cos import CosConfig, CosS3Client
+from src.config.database import MYSQL_MULTI_CONFIG, NEO4J_CONFIG, MONGODB_CONFIG, QDRANT_CONFIG, COS_CONFIG
+
+class AsyncMysqlSingleton:
+    """多库 MySQL 异步单例，缓存 async engine + sessionmaker"""
+    _engines: Dict[str, async_sessionmaker] = {}
+    _raw_engines: Dict[str, "AsyncEngine"] = {}
+
+    @classmethod
+    async def get_session(cls, db_name: str):
+        if db_name not in cls._engines:
+            config = MYSQL_MULTI_CONFIG[db_name]
+            # 异步连接串：mysql+asyncmy
+            dsn = (
+                f"mysql+asyncmy://{config['user']}:{config['password']}@"
+                f"{config['host']}:{config['port']}/{config['database']}"
+            )
+            engine = create_async_engine(
+                dsn,
+                pool_size=config.get('pool_size', 10),
+                max_overflow=config.get('max_overflow', 20),
+                pool_recycle=config.get('pool_recycle', 3600),
+                pool_pre_ping=True,
+            )
+            # MySQL连通测试
+            try:
+                async with engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            except Exception as e:
+                await engine.dispose()
+                raise ConnectionError(f"MySQL[{db_name}] 连接测试失败") from e
+
+            session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+            cls._raw_engines[db_name] = engine
+            cls._engines[db_name] = session_factory
+        return cls._engines[db_name]
+
+    @classmethod
+    async def close_all(cls):
+        for eng in cls._raw_engines.values():
+            await eng.dispose()
+        cls._engines.clear()
+        cls._raw_engines.clear()
 
 class AsyncNeo4jSingleton:
     """Neo4j 异步单例：缓存 AsyncDriver，不缓存session"""
@@ -11,8 +56,6 @@ class AsyncNeo4jSingleton:
     @classmethod
     async def get_driver(cls):
         if cls._driver is None:
-            from src.config.database import NEO4J_CONFIG
-            from neo4j import AsyncGraphDatabase
             config = NEO4J_CONFIG
             cls._driver = AsyncGraphDatabase.driver(
                 uri=config["uri"],
@@ -46,7 +89,6 @@ class AsyncMongoSingleton:
     @classmethod
     async def get_instance(cls):
         if cls._client is None:
-
             config = MONGODB_CONFIG
             if config.get("user") and config.get("password"):
                 uri = (
@@ -83,55 +125,10 @@ class AsyncMongoSingleton:
         return cls._db
 
     @classmethod
-    async def close(cls):
+    def close(cls):
         if cls._client is not None:
             cls._client.close()
             cls._client = None
-
-
-class AsyncMysqlSingleton:
-    """多库 MySQL 异步单例，缓存 async engine + sessionmaker"""
-    _engines: Dict[str, async_sessionmaker] = {}
-    _raw_engines: Dict[str, "AsyncEngine"] = {}
-
-    @classmethod
-    async def get_session(cls, db_name: str):
-        if db_name not in cls._engines:
-            from src.config.database import MYSQL_MULTI_CONFIG
-            from sqlalchemy import text
-            config = MYSQL_MULTI_CONFIG[db_name]
-            # 异步连接串：mysql+asyncmy
-            dsn = (
-                f"mysql+asyncmy://{config['user']}:{config['password']}@"
-                f"{config['host']}:{config['port']}/{config['database']}"
-            )
-            engine = create_async_engine(
-                dsn,
-                pool_size=config.get('pool_size', 10),
-                max_overflow=config.get('max_overflow', 20),
-                pool_recycle=config.get('pool_recycle', 3600),
-                pool_pre_ping=True,
-            )
-            # MySQL连通测试
-            try:
-                async with engine.connect() as conn:
-                    await conn.execute(text("SELECT 1"))
-            except Exception as e:
-                await engine.dispose()
-                raise ConnectionError(f"MySQL[{db_name}] 连接测试失败") from e
-
-            session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
-            cls._raw_engines[db_name] = engine
-            cls._engines[db_name] = session_factory
-        return cls._engines[db_name]
-
-    @classmethod
-    async def close_all(cls):
-        for eng in cls._raw_engines.values():
-            await eng.dispose()
-        cls._engines.clear()
-        cls._raw_engines.clear()
-
 
 class AsyncQdrantSingleton:
     """Qdrant 异步客户端全局单例，单一向量库实例"""
@@ -177,8 +174,6 @@ class CosSingleton:
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
-            from qcloud_cos import CosConfig, CosS3Client
-            from src.config.database import COS_CONFIG
             config = CosConfig(
                 Region=COS_CONFIG['region'],
                 SecretId=COS_CONFIG['secret_id'],

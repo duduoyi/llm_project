@@ -1,10 +1,7 @@
-import asyncio
 from sqlalchemy import select
-from src.utils.singletons.database_singleton import AsyncMysqlSingleton, AsyncQdrantSingleton
 from qdrant_client.models import PointStruct
 from src.services.ETL.base_etl_service import BaseETLService
 from src.config.mysql_patent_orm import OdsCompanyPatentInfo
-from src.utils.singletons.ai_singleton import EmbeddingFactory
 from src.utils.data_cleaner import preprocess_all_string_fields
 import hashlib
 
@@ -20,7 +17,7 @@ class QdrantCompanyPatent(BaseETLService):
 
     async def extract_batch(self, last_id: int = 0):
         # MySQL：获取异步session工厂
-        mysql_session_factory = await AsyncMysqlSingleton.get_session("patent")
+        mysql_session_factory = await self.get_mysql_session_factory("patent")
         async with mysql_session_factory() as session:
             # ✅ SQLAlchemy 异步标准写法：使用 select()
             stmt = select(
@@ -92,7 +89,7 @@ class QdrantCompanyPatent(BaseETLService):
 
         # ===================== 3. 存储到qdrant中 ====================
         # 2. 批量异步向量化（带信号量限流，我们包装好的方法）
-        emb_wrapper = EmbeddingFactory.get_instance()
+        emb_wrapper = await self.get_emb_wrapper()
         # ⚠️ QdrantVectorStore必须传入原始embedding对象，不能传包装器
         vectors = await emb_wrapper.aembed_documents(text_list)
 
@@ -108,7 +105,7 @@ class QdrantCompanyPatent(BaseETLService):
         # 3. Qdrant入库
         collection_name = "patent_test"
         # Qdrant 异步客户端
-        qdrant_client = await AsyncQdrantSingleton.get_instance()
+        qdrant_client = await self.get_qdrant_client()
         # 原生异步API
         exists = await qdrant_client.collection_exists(collection_name)
         if not exists:
@@ -137,6 +134,7 @@ class QdrantCompanyPatent(BaseETLService):
 #
 #
 # if __name__ == '__main__':
+#     import asyncio
 #     asyncio.run(main())
 
 

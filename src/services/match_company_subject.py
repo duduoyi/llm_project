@@ -1,6 +1,5 @@
 import re
-from src.utils.singletons.database_singleton import AsyncMongoSingleton
-from src.utils.singletons.ai_singleton import LLMFactory
+from src.services.base_resource_service import BaseResourceService
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.utils.logger import get_logger
 import asyncio
@@ -8,7 +7,7 @@ from collections import defaultdict
 import json
 
 
-class MatchCompanySubject:
+class MatchCompanySubject(BaseResourceService):
     def __init__(self, max_workers: int = 5):
         """
         初始化服务类（同步构造，仅声明变量）
@@ -16,21 +15,12 @@ class MatchCompanySubject:
         self.logger = get_logger(self.__class__.__name__)
         self.max_workers = max_workers
         # 异步客户端延后init初始化
-        self._mongo_db = None
         self.university_coll_name = "university_group_info"
         self.company_coll_name = "company_info"
         # 初始化大模型（需支持ainvoke异步调用）
-        self._llm_client = LLMFactory.get_instance('qwen')
-
-    async def init(self):
-        """异步初始化Mongo连接（必须await调用）"""
-        self._mongo_db = await AsyncMongoSingleton.get_db()
-        self.logger.info("✅ MatchCompanySubject Mongo异步客户端初始化完成")
+        self._llm_model = 'qwen'
 
     async def match_company_college(self):
-        if self._mongo_db is None:
-            raise RuntimeError("请先执行 await service.init() 初始化Mongo客户端！")
-
         self.logger.info(f"开始异步批量处理企业学院匹配 | LLM最大并发: {self.max_workers}")
         # ========== 步骤1：获取学科、实验平台数据【异步mongo】 ==========
         research_subject_dict = await self.get_university_research_subject()
@@ -135,7 +125,8 @@ class MatchCompanySubject:
             },
             {"$project": {"_id": 0}}
         ]
-        university_coll = self._mongo_db[self.university_coll_name]
+        mongo_db = await self.get_mongo_db()
+        university_coll = mongo_db[self.university_coll_name]
         cursor = university_coll.aggregate(pipeline)
         data_list = await cursor.to_list(length=1)
         return data_list[0] if data_list else {}
@@ -155,7 +146,8 @@ class MatchCompanySubject:
             }},
             # {"$limit": 1}
         ]
-        company_coll = self._mongo_db[self.company_coll_name]
+        mongo_db = await self.get_mongo_db()
+        company_coll = mongo_db[self.company_coll_name]
         cursor = company_coll.aggregate(pipeline)
         return await cursor.to_list(length=None)
 
@@ -237,7 +229,8 @@ class MatchCompanySubject:
                 ]
 
                 self.logger.info(f"正在异步调用千问大模型... (第{attempt + 1}次尝试)")
-                response = await self._llm_client.ainvoke(messages)
+                llm_client = await self.get_llm_instance(self._llm_model)
+                response = await llm_client.ainvoke(messages)
                 self.logger.info(f"LLM异步调用成功，开始解析响应...")
 
                 if not hasattr(response, 'content'):
@@ -273,11 +266,11 @@ class MatchCompanySubject:
         return '\n'.join(line.strip() for line in text.split('\n'))
 
 
-async def main():
-    service = MatchCompanySubject(max_workers=5)
-    await service.init()
-    result = await service.match_company_college()
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-if __name__ == '__main__':
-    asyncio.run(main())
+# # ==================== 测试 =========================
+# async def main():
+#     service = MatchCompanySubject(max_workers=5)
+#     result = await service.match_company_college()
+#     print(json.dumps(result, ensure_ascii=False, indent=2))
+#
+# if __name__ == '__main__':
+#     asyncio.run(main())

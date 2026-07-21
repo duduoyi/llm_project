@@ -3,17 +3,15 @@
 工作流程：读取政策文件 → 转换为json →存入MongoDB
 """
 import asyncio
-from src.utils.singletons.database_singleton import AsyncMongoSingleton
+from src.services.base_resource_service import BaseResourceService
 from src.utils.logger import get_logger
 from pathlib import Path
 import re
 import os
 
 
-class PolicyAnalysisServices:
+class PolicyAnalysisServices(BaseResourceService):
     """政策解析服务类 - 封装政策文件解析结果"""
-    # 全局Mongo写入互斥锁
-    _mongo_write_lock = asyncio.Lock()
 
     def __init__(self):
         """
@@ -23,14 +21,8 @@ class PolicyAnalysisServices:
         self.project_root = Path(__file__).parent.parent.parent
         self.policy_folder = self.project_root / "files" / "policy"
         # 初始化客户端
-        self._mongo_db = None
         self.policy_collection_name = "policy"
         self.attachments_collection_name = "attachments"
-
-    async def init(self):
-        """异步初始化，在 lifespan / 任务启动时调用"""
-        self._mongo_db = await AsyncMongoSingleton.get_db()
-        self.logger.info("✅ Async Mongo 客户端初始化完成")
 
     async def policy_to_mongodb(self, file_name=None):
         # 1. 获取文件列表（根据 file_name 判断）
@@ -58,31 +50,29 @@ class PolicyAnalysisServices:
             block_dicts = await asyncio.to_thread(self._split_markdown_to_json, md_text)
             update_data.extend(block_dicts)
         # 4. 存入MongoDB
-        async with self._mongo_write_lock:
-            result = await self._save_json_to_mongodb(
-                update_data,
-                collection_name=self.policy_collection_name
-            )
+        result = await self._save_json_to_mongodb(
+            update_data,
+            collection_name=self.policy_collection_name
+        )
         self.logger.info(f"✅ 完成同步：{result} 条数据")
         return result
 
     async def policy_attachments_to_mongodb(self):
         """同步政策附件到MongoDB"""
-        async with self._mongo_write_lock:
-            # 读取政策集合附件数据
-            policy_attachment_list = await self.get_policy_attachments(
-                collection_name=self.policy_collection_name
-            )
-            # 结构转换
-            clear_attachment_list = await asyncio.to_thread(
-                self.transform_policy_attachments,
-                policy_attachment_list
-            )
-            # 附件写入
-            result = await self._save_json_to_mongodb(
-                clear_attachment_list,
-                collection_name=self.attachments_collection_name
-            )
+        # 读取政策集合附件数据
+        policy_attachment_list = await self.get_policy_attachments(
+            collection_name=self.policy_collection_name
+        )
+        # 结构转换
+        clear_attachment_list = await asyncio.to_thread(
+            self.transform_policy_attachments,
+            policy_attachment_list
+        )
+        # 附件写入
+        result = await self._save_json_to_mongodb(
+            clear_attachment_list,
+            collection_name=self.attachments_collection_name
+        )
         self.logger.info(f"✅ 政策附件同步完成：{result}")
         return result
 
@@ -253,7 +243,8 @@ class PolicyAnalysisServices:
         return result
 
     async def get_policy_attachments(self, collection_name: str):
-        collection = self._mongo_db[collection_name]
+        mongo_db = await self.get_mongo_db()
+        collection = mongo_db[collection_name]
         pipeline = [
             # 只筛选 sourceFile 非空数组、不为null的文档
             {"$match": {"sourceFile": {"$exists": True, "$ne": []}}},
@@ -323,7 +314,8 @@ class PolicyAnalysisServices:
         只更新/新增字段，旧字段 100% 保留
         特别处理：企业基本信息 只新增不存在的键，不覆盖已有键
         """
-        collection = self._mongo_db[collection_name]
+        mongo_db = await self.get_mongo_db()
+        collection = mongo_db[collection_name]
 
         try:
             if not policy_list:
@@ -344,7 +336,6 @@ class PolicyAnalysisServices:
 
 # async def main():
 #     service = PolicyAnalysisServices()
-#     await service.init()  # 千万不要漏！
 #     res = await service.policy_attachments_to_mongodb()
 #     print(res)
 #

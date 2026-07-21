@@ -1,6 +1,4 @@
-import asyncio
 import hashlib
-from src.utils.singletons.database_singleton import AsyncMongoSingleton, AsyncQdrantSingleton
 from src.utils.singletons.ai_singleton import EmbeddingFactory
 from src.services.ETL.base_etl_service import BaseETLService
 from qdrant_client.http import models
@@ -13,12 +11,10 @@ class TeacherProfileVector(BaseETLService):
     """
     name = "teacher_profile_vector"
     source_type = "mongodb"
-    # 全局互斥锁，防止与其他Qdrant写入任务并发冲突
-    _global_qdrant_lock = asyncio.Lock()
 
     async def extract_batch(self, last_id=None):
         """分批从Mongo读取教师数据（游标分页）"""
-        mongo_db = await AsyncMongoSingleton.get_db()
+        mongo_db = await self.get_mongo_db()
         coll = mongo_db["teacher_profiles"]
         filter_query = {}
 
@@ -133,22 +129,21 @@ class TeacherProfileVector(BaseETLService):
             ))
 
         # ========== Qdrant写入，加全局锁 ==========
-        async with self._global_qdrant_lock:
-            qdrant_collection = 'teacher_profile'
-            qdrant_client = await AsyncQdrantSingleton.get_instance()
-            exist_flag = await qdrant_client.collection_exists(qdrant_collection)
-            if not exist_flag:
-                self.logger.error(f"Qdrant集合 {qdrant_collection} 不存在！请先创建集合")
-                return False, f"集合{qdrant_collection}不存在"
+        qdrant_collection = 'teacher_profile'
+        qdrant_client = await self.get_qdrant_client()
+        exist_flag = await qdrant_client.collection_exists(qdrant_collection)
+        if not exist_flag:
+            self.logger.error(f"Qdrant集合 {qdrant_collection} 不存在！请先创建集合")
+            return False, f"集合{qdrant_collection}不存在"
 
-            await qdrant_client.upsert(
-                collection_name=qdrant_collection,
-                points=points
-            )
+        await qdrant_client.upsert(
+            collection_name=qdrant_collection,
+            points=points
+        )
         self.logger.info(f"✅ 批次入库成功，数量：{len(points)}")
         return True, "success"
 
-# 测试
+# # 测试
 # async def main():
 #     config = {
 #         "start_time": None,
@@ -162,4 +157,5 @@ class TeacherProfileVector(BaseETLService):
 #         print(f"批次处理结果：{ok}, {msg}")
 #
 # if __name__ == '__main__':
+#     import asyncio
 #     asyncio.run(main())

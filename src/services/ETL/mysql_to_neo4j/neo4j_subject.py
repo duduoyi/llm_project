@@ -1,7 +1,5 @@
-import asyncio
 from sqlalchemy import select
 from src.services.ETL.base_etl_service import BaseETLService
-from src.utils.singletons.database_singleton import AsyncMysqlSingleton, AsyncNeo4jSingleton
 from src.config.mysql_patent_orm import DimUniversitySubject
 from src.utils.data_cleaner import preprocess_all_string_fields
 
@@ -17,7 +15,7 @@ class Neo4jSubject(BaseETLService):
 
     async def extract_batch(self, last_id: int = 0):
         # MySQL：获取异步session工厂
-        mysql_session_factory = await AsyncMysqlSingleton.get_session("patent")
+        mysql_session_factory = await self.get_mysql_session_factory("patent")
         async with mysql_session_factory() as session:
             # ✅ SQLAlchemy 异步标准写法：使用 select()
             stmt = select(
@@ -85,7 +83,7 @@ class Neo4jSubject(BaseETLService):
                 RETURN batches, total, errorMessages, failedBatches
             """
             # ✅ 异步Neo4j关键改动：开启异步session + await run
-            neo4j_driver = await AsyncNeo4jSingleton.get_driver()
+            neo4j_driver = await self.get_neo4j_driver()
             async with neo4j_driver.session() as session:
                 result = await session.run(cypher_query, external_lists=data_clean)
                 record = await result.single()
@@ -106,7 +104,7 @@ class Neo4jSubject(BaseETLService):
 
 
 
-
+#
 # # 测试
 # async def main():
 #     config = {
@@ -120,4 +118,5 @@ class Neo4jSubject(BaseETLService):
 #
 #
 # if __name__ == '__main__':
+#     import asyncio
 #     asyncio.run(main())

@@ -1,6 +1,4 @@
-import asyncio
 from sqlalchemy import select
-from src.utils.singletons.database_singleton import AsyncMysqlSingleton, AsyncQdrantSingleton
 from src.services.ETL.base_etl_service import BaseETLService
 from src.config.mysql_patent_orm import OdsUniversityPatentInfo
 from qdrant_client.http import models
@@ -15,7 +13,7 @@ class QdrantUniversityPatentPayload(BaseETLService):
 
     async def extract_batch(self, last_id: int = 0):
         # MySQL：获取异步session工厂
-        mysql_session_factory = await AsyncMysqlSingleton.get_session("patent")
+        mysql_session_factory = await self.get_mysql_session_factory("patent")
         async with mysql_session_factory() as session:
             # ✅ SQLAlchemy 异步标准写法：使用 select()
             stmt = select(
@@ -78,7 +76,7 @@ class QdrantUniversityPatentPayload(BaseETLService):
 
             # ===================== 3. 存储到qdrant中 ====================
             collection_name = "patent_test"
-            qdrant_client = await AsyncQdrantSingleton.get_instance()
+            qdrant_client = await self.get_qdrant_client()
             # 检查集合是否已存在
             if await qdrant_client.collection_exists(collection_name):
                 # 批量获取point的存在性（仅查询ID，不返回向量/payload）

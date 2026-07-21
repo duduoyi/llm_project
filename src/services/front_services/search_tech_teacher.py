@@ -1,9 +1,8 @@
-from src.utils.singletons.ai_singleton import EmbeddingFactory
-from src.utils.singletons.database_singleton import AsyncQdrantSingleton
+from src.services.base_resource_service import BaseResourceService
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 
-class SearchTechTeacherService:
+class SearchTechTeacherService(BaseResourceService):
     def __init__(self):
         self.qdrant_coll = "teacher_profile"
         self.mongo_collection = "teacher_profiles"
@@ -11,7 +10,7 @@ class SearchTechTeacherService:
 
     async def search_vector(self, text, university, top_k = 20):
         # 批量异步向量化（自带信号量限流）
-        emb_wrapper = EmbeddingFactory.get_instance()
+        emb_wrapper = await self.get_emb_wrapper()
         query_vector = await emb_wrapper.aembed_query(text)
 
         # 2. 构建过滤条件 payload.university = 指定大学
@@ -24,7 +23,7 @@ class SearchTechTeacherService:
             ]
         )
 
-        qdrant_client = await AsyncQdrantSingleton.get_instance()
+        qdrant_client = await self.get_qdrant_client()
         # 3. 执行向量检索
         resp = await qdrant_client.query_points(
             collection_name=self.qdrant_coll,
@@ -60,9 +59,8 @@ class SearchTechTeacherService:
     #     if not mongo_id_list:
     #         return []
     #
-    #     from src.utils.singletons.database_singleton import AsyncMongoSingleton
     #     from bson import ObjectId
-    #     mongo_db = await AsyncMongoSingleton.get_db()
+    #     mongo_db = await self.get_mongo_db()
     #     coll = mongo_db[self.mongo_collection]
     #
     #     #mongo_id 是字符串，对应 mongo _id(ObjectId)，必须转ObjectId

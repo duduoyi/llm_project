@@ -1,5 +1,4 @@
 # 应用入口
-import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,16 +9,9 @@ import os
 from src.utils.logger import get_logger
 from src.config.app import origins
 # 导入异步数据库单例
-from src.utils.singletons.database_singleton import (
-    AsyncMysqlSingleton,
-    AsyncNeo4jSingleton,
-    AsyncQdrantSingleton,
-    AsyncMongoSingleton,
-    CosSingleton
-)
-from src.utils.singletons.ai_singleton import EmbeddingFactory, LLMFactory
+from src.services.base_resource_service import BaseResourceService
 # 导入路由模块
-from src.api import system_router, etl_router, front_router
+from src.api import system_router, etl_router, front_router, qdrant_router
 # ===== 新增：导入etl定时调度器相关 =====
 from src.api.etl_api import scheduler, register_all_schedule_jobs
 
@@ -33,37 +25,34 @@ async def lifespan(app: FastAPI):
     logger.info("===== 服务启动，开始预热所有数据库连接 =====")
     try:
         # # 1. MySQL patent 库异步连接池
-        # await AsyncMysqlSingleton.get_session("patent")
-        # logger.info("✅ MySQL patent 连接池预热完成")
+        # await BaseResourceService.get_mysql_session_factory("patent")
+        # logger.info("✅ MySQL Session工厂预加载完成")
         #
         # # 2. Neo4j 异步驱动
-        # await AsyncNeo4jSingleton.get_driver()
-        # logger.info("✅ Neo4j 异步驱动预热完成")
+        # await BaseResourceService.get_neo4j_driver()
+        # logger.info("✅ Neo4j Driver 预加载完成")
 
         # 3. Qdrant development 向量库客户端
-        await AsyncQdrantSingleton.get_instance()
-        logger.info("✅ Qdrant development 客户端预热完成")
+        await BaseResourceService.get_qdrant_client()
+        logger.info("✅ Qdrant Client 预加载完成")
 
         # 4. MongoDB 异步连接
-        await AsyncMongoSingleton.get_instance()
-        logger.info("✅ MongoDB motor 异步客户端预热完成")
+        await BaseResourceService.get_mongo_db()
+        logger.info("✅ MongoDB motor 异步客户端预加载完成")
 
         # # COS 同步客户端，无await，触发懒加载初始化
-        # CosSingleton.get_instance()
+        # await BaseResourceService.get_cos_client()
         # logger.info("✅ COS 对象存储客户端初始化完成")
 
         # 嵌入式模型（防止模型加载阻塞事件循环）
-        emb_wrapper = await asyncio.to_thread(
-            EmbeddingFactory.get_instance,
-            "paraphrase-multilingual-MiniLM-L12-v2"
-        )
-
+        await BaseResourceService.get_emb_wrapper()
+        emb_wrapper = await BaseResourceService.get_emb_wrapper()
         # 可选：预热一次推理（真正加载模型权重到内存）
         _ = await emb_wrapper.aembed_query("warm up")
         logger.info("✅ Embedding 向量模型加载完成")
 
         # # 预热 LLM（只是实例创建，不会发起网络请求；真正调用才会访问大模型接口）
-        # await LLMFactory.get_instance("qwen")
+        # await BaseResourceService.get_llm_instance("qwen")
         # logger.info("✅ LLM客户端初始化完成")
 
         logger.info("===== 所有数据库资源预热完毕，开始接收请求 =====")
@@ -92,10 +81,8 @@ async def lifespan(app: FastAPI):
             scheduler.shutdown()
             logger.info("✅ APScheduler ETL定时调度器已关闭")
 
-        # await AsyncMysqlSingleton.close_all()
-        # await AsyncNeo4jSingleton.close()
-        await AsyncMongoSingleton.close()
-        await AsyncQdrantSingleton.close()
+        # 可在这里补充统一关闭所有数据库连接/模型资源的静态方法
+        await BaseResourceService.close_all_resource()
         logger.info("✅ 全部异步数据库连接已正常关闭")
     except Exception as e:
         logger.error(f"关闭数据库资源异常: {str(e)}", exc_info=True)
@@ -141,6 +128,7 @@ async def custom_swagger_ui_html(request: Request):
 app.include_router(system_router)
 app.include_router(etl_router)
 app.include_router(front_router)
+app.include_router(qdrant_router)
 
 # 应用入口
 if __name__ == "__main__":
