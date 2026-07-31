@@ -25,13 +25,13 @@ from src.config.app import LOG_CONFIG, ALLOWED_ORIGINS
 # 认证配置
 from src.config.auth import ETL_API_KEY, FRONTEND_API_KEY, ETL_API_KEY_MAP
 # 数据库配置
-from src.config.database import MYSQL_MULTI_CONFIG, NEO4J_CONFIG, QDRANT_CONFIG, QDRANT_PRODUCTION_CONFIG, MONGODB_CONFIG
+from src.config.database import MYSQL_MULTI_CONFIG, NEO4J_CONFIG, QDRANT_CONFIG, MONGODB_CONFIG
 # LLM模型配置
 
 # 明确对外暴露的配置列表（修复：调用extend方法，而非赋值）
 __all__.extend([
     # 数据库
-    "MYSQL_MULTI_CONFIG", "NEO4J_CONFIG", "QDRANT_CONFIG", "QDRANT_PRODUCTION_CONFIG", "MONGODB_CONFIG"
+    "MYSQL_MULTI_CONFIG", "NEO4J_CONFIG", "QDRANT_CONFIG", "MONGODB_CONFIG"
     # 应用
     "LOG_CONFIG", "ALLOWED_ORIGINS",
     # 模型

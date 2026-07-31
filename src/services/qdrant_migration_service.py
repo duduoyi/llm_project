@@ -2,7 +2,6 @@ from src.services.base_resource_service import BaseResourceService
 from src.utils.logger import get_logger
 from src.utils.storage_manager import get_storage
 from typing import Optional
-from src.config.database import QDRANT_CONFIG, QDRANT_PRODUCTION_CONFIG
 
 
 class QdrantMigrationService(BaseResourceService):
@@ -17,10 +16,10 @@ class QdrantMigrationService(BaseResourceService):
         self.dev_qdrant_client = None
         self.pro_qdrant_client = None
 
-    async def init(self):
+    async def init(self, from_qdrant_config, to_qdrant_config):
         """异步初始化，在 lifespan 或者任务启动时调用"""
-        self.dev_qdrant_client = await self.get_qdrant_client(QDRANT_CONFIG)
-        self.pro_qdrant_client = await self.get_qdrant_client(QDRANT_PRODUCTION_CONFIG)
+        self.dev_qdrant_client = await self.get_qdrant_client(from_qdrant_config)
+        self.pro_qdrant_client = await self.get_qdrant_client(to_qdrant_config)
         self.logger.info("✅ Qdrant 异步客户端初始化完成")
 
     async def export_qdrant_data(self, old_collection: str):
@@ -134,14 +133,26 @@ class QdrantMigrationService(BaseResourceService):
 
         self.logger.info("迁移完成 🎉")
 
-# # ===================== 异步测试入口 =====================
-# async def main():
-#     service = QdrantMigrationService()
-#     await service.init()
-#     await service.migrate("patent_vector", "patent")
-#
-#
-# if __name__ == "__main__":
-#     import asyncio
-#     asyncio.run(main())
+# ===================== 异步测试入口 =====================
+async def main():
+    service = QdrantMigrationService()
+    # Qdrant配置
+    from_qdrant_config = {
+        'host': '127.0.0.1',
+        'port': '6333',
+        'api_key': ''
+    }
+
+    to_qdrant_config = {
+        'host': '127.0.0.1',
+        'port': '6333',
+        'api_key': ''
+    }
+    await service.init(from_qdrant_config, to_qdrant_config)
+    await service.migrate("patent_vector", "patent")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 

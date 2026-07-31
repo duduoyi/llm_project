@@ -66,12 +66,12 @@ class BaseResourceService(ABC):
         return cls._neo4j_driver
 
     @classmethod
-    async def get_mongo_db(cls) -> AsyncIOMotorDatabase:
+    async def get_mongo_db(cls, db_name = None) -> AsyncIOMotorDatabase:
         if cls._mongo_lock is None:
             cls._mongo_lock = asyncio.Lock()
         async with cls._mongo_lock:
             if cls._mongo_db is None:
-                cls._mongo_db = await AsyncMongoSingleton.get_db()
+                cls._mongo_db = await AsyncMongoSingleton.get_db(db_name)
         return cls._mongo_db
 
     # -------------------------- Qdrant 统一获取Client --------------------------

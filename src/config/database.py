@@ -49,12 +49,6 @@ QDRANT_CONFIG = {
     'api_key': os.getenv('QDRANT_API_KEY', ''),
 }
 
-QDRANT_PRODUCTION_CONFIG = {
-    'host': os.getenv('QDRANT_PRODUCTION_HOST'),
-    'port': int(os.getenv('QDRANT_PRODUCTION_PORT')),
-    'api_key': os.getenv('QDRANT_PRODUCTION_API_KEY', ''),
-}
-
 # Cos 配置
 COS_CONFIG = {
     'secret_id': os.getenv('COS_SECRET_ID'),

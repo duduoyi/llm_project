@@ -115,12 +115,12 @@ class AsyncMongoSingleton:
         return cls._client
 
     @classmethod
-    async def get_db(cls) -> AsyncIOMotorDatabase:
+    async def get_db(cls, db_name = None) -> AsyncIOMotorDatabase:
         """获取配置中指定的数据库实例（MONGODB_DATABASE）"""
         if cls._db is None:
             client = await cls.get_instance()
-            from src.config.database import MONGODB_CONFIG
-            db_name = MONGODB_CONFIG["database"]
+            if db_name is None:
+                db_name = MONGODB_CONFIG["database"]
             cls._db = client[db_name]
         return cls._db
 
