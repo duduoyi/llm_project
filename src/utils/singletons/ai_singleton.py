@@ -81,7 +81,7 @@ class LLMFactory:
                     api_key=os.getenv("ZHIPU_API_KEY"),
                     base_url=os.getenv("ZHIPU_BASE_URL"),
                     temperature=0,
-                    max_tokens=1024,
+                    # max_tokens=1024,
                 )
             elif provider == "qwen":
                 cls._instances[provider] = ChatOpenAI(
@@ -89,7 +89,10 @@ class LLMFactory:
                     api_key=os.getenv("QWEN_API_KEY"),
                     base_url=os.getenv("QWEN_BASE_URL"),
                     temperature=0.1,
-                    max_tokens=4096,
+                    # 1. 初始化时绑定 JSON 模式， 系统提示词必须含JSON
+                    model_kwargs={"response_format": {"type": "json_object"}},
+                    # 2. 给予足够的生成长度，防止截断
+                    # max_tokens=16384
                 )
             else:
                 raise ValueError(f"不支持的 LLM 提供商: {provider}")

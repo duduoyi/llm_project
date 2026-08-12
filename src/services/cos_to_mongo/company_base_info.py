@@ -18,14 +18,17 @@ class CompanyBaseInfo(BaseResourceService):
         self._mongo_collection = "company_info"
         self._bucket_name = "company-report-1366204382"
         self._qcc_folder = "qcc_company/"
-        self._listed_folder = "suzhou_listed_company/"
 
-    async def listed_company_to_mongodb(self):
+
+    async def listed_company_to_mongodb(self, listed_folder):
         try:
+            cos_client = await self.get_cos_client()
             # 1. 获取文件列表（文件遍历是同步操作，to_thread隔离）
             file_key_list = await asyncio.to_thread(
                 self._get_files_list,
-                folder_path=self._listed_folder,
+                cos_client,
+                bucket=self._bucket_name,
+                prefix=listed_folder,
                 file_format=".txt"
             )
             self.logger.info(f"待处理上市企业文件列表: {file_key_list}")
@@ -320,12 +323,12 @@ class CompanyBaseInfo(BaseResourceService):
         return success
 
 
-# # ====================== 异步测试入口 ======================
-# async def main():
-#     service = CompanyBaseInfo()
-#     # await service.listed_company_to_mongodb()
-#     await service.qcc_company_to_mongodb("苏州市专精特新“小巨人”企业及上市企业.xlsx")
-#
-#
-# if __name__ == "__main__":
-#     asyncio.run(main())
+# ====================== 异步测试入口 ======================
+async def main():
+    service = CompanyBaseInfo()
+    await service.listed_company_to_mongodb("nantong_listed_company/")
+    # await service.qcc_company_to_mongodb("南通市专精特新“小巨人”企业及上市企业.xlsx")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

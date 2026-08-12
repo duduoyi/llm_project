@@ -15,11 +15,14 @@ from collections import defaultdict
 import pdfplumber
 from PyPDF2 import PdfReader, PdfWriter
 import asyncio
+from qcloud_cos import CosServiceError
+import textwrap
+import difflib
 
 
 class CompanyReportServices(BaseResourceService):
     """报告服务类 - 封装校企匹配报告生成的核心逻辑（支持异步高并发）"""
-    def __init__(self, max_workers: int = 5):
+    def __init__(self, max_workers: int = 3):
         """
         初始化服务类
         :param max_workers: 最大并发数，默认5
@@ -32,7 +35,7 @@ class CompanyReportServices(BaseResourceService):
 
         # 分块阈值配置（两层分块分离，独立可调）
         self.pdf_memory_chunk_limit = 3500  # PDF解析内存分块
-        self.llm_chunk_max_len = 3200  # LLM上下文输入分片
+        self.llm_chunk_max_len = 100000  # LLM上下文输入分片
 
         # 初始化客户端（懒加载）
         self._mongo_collection = "company_info"
@@ -42,26 +45,18 @@ class CompanyReportServices(BaseResourceService):
     # ==================== 核心异步工作流 ====================
     async def process_batch_async(
             self,
-            source_prefix: str = "2025年/"
     ) -> dict:
         """
         异步批量处理：完整工作流程（读取→提取MDA→转换→解析→存储）
         :return: 处理结果汇总
         """
         try:
-            self.logger.info(f"开始异步批量处理 | LLM最大并发: {self.max_workers * 2} | 源目录: {source_prefix}")
+            self.logger.info(f"获取需解析的年报路径")
+            pdf_files = await self._get_report_cos_path()
+
+            self.logger.info(f"开始异步批量处理 | LLM最大并发: {self.max_workers * 2}")
             cos_client = await self.get_cos_client()
 
-            # ========== 步骤1：获取文件（线程池执行，增加超时） ==========
-            pdf_files = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self._get_company_report_list,
-                    cos_client,
-                    self._bucket_name,
-                    source_prefix
-                ),
-                timeout=120
-            )
             self.logger.info(f"找到待处理文件: {len(pdf_files)} 个")
 
             if not pdf_files:
@@ -75,15 +70,12 @@ class CompanyReportServices(BaseResourceService):
             # ============================
             async def process_one_file(file_key):
                 try:
+                    source_prefix = file_key.split('/')[0]
                     file_name = file_key.split('/')[-1]
                     base_name = os.path.splitext(file_name)[0]
-                    # 兼容中英文冒号截取证券简称
-                    stock_short_name = base_name.split(":", 1)[0] if ":" in base_name else (
-                        base_name.split("：", 1)[0] if "：" in base_name else base_name
-                    )
-                    mda_pdf_key = f"{source_prefix}MDA/{base_name}_mda.pdf"
+                    mda_pdf_key = f"{source_prefix}/MDA/{base_name}_mda.pdf"
 
-                    self.logger.info(f"[MDA提取] {file_name} | 证券简称：{stock_short_name}")
+                    self.logger.info(f"[MDA提取] {file_name}")
 
                     # 修复6：IO操作加IO信号量限流
                     async with self.io_semaphore:
@@ -101,7 +93,7 @@ class CompanyReportServices(BaseResourceService):
                         return {"success": False, "file_key": file_key, "error": "提取MDA失败"}
 
                     self.logger.info(f"[MDA解析] {mda_pdf_key}")
-                    save_result = await self._analyze_and_save_mda(mda_pdf_key, stock_short_name)
+                    save_result = await self._analyze_and_save_mda(mda_pdf_key, file_key)
                     if save_result.get("success"):
                         self.logger.info(f"[成功] {mda_pdf_key}")
                         return {"success": True, "file_key": mda_pdf_key}
@@ -136,28 +128,36 @@ class CompanyReportServices(BaseResourceService):
             return summary
 
         except Exception as e:
-            self.logger.error(f"MDA批量处理整体异常 source_prefix={source_prefix}, err={str(e)}", exc_info=True)
+            self.logger.error(f"MDA批量处理整体异常 err={str(e)}", exc_info=True)
             raise
 
     # ==================== 获取年报pdf列表 ====================
-    @staticmethod
-    def _get_company_report_list(cos_client, bucket: str, prefix: str) -> List[str]:
-        pdf_files = []
-        marker = ""
-        while True:
-            resp = cos_client.list_objects(Bucket=bucket, Prefix=prefix, Marker=marker)
-            contents = resp.get('Contents', [])
-            if not contents:
-                break
-            for item in contents:
-                key = item['Key']
-                if key.lower().endswith('.pdf') and '_mda' not in key:
-                    pdf_files.append(key)
-            if resp.get('IsTruncated') == 'true':
-                marker = resp.get('NextMarker', '')
-            else:
-                break
-        return pdf_files
+    async def _get_report_cos_path(self):
+        mongo_db = await self.get_mongo_db()
+        company_coll = mongo_db[self._mongo_collection]
+
+        # ==========第一步：company_coll 查询未解析的年报==========
+        report_filter = {
+            "_metadata.source_file": {"$exists": True},
+            # 暂时修正更新
+            "企业基本信息.所属区县": "海门区"
+            # "_metadata.mda_file": {"$exists": False}
+        }
+        # 投影：只返回cos路径
+        report_proj = {
+            "_id": 0,
+            "_metadata.source_file": 1
+        }
+
+        report_list = []
+        cursor = company_coll.find(report_filter, projection=report_proj).batch_size(1000)
+        async for doc in cursor:
+            report_path = doc["_metadata"]["source_file"]
+            report_list.append(report_path)
+
+        self.logger.info(f"从{company_coll}拿到 {len(report_list)} 个年报路径")
+        return report_list
+
 
     # ==================== 提取并存储MDA.pdf ====================
     def _extract_and_save_mda(self, cos_client, bucket: str, origin_file_key: str, mda_file_key: str):
@@ -170,8 +170,9 @@ class CompanyReportServices(BaseResourceService):
             cos_client.head_object(Bucket=bucket, Key=mda_file_key)
             self.logger.info(f"[提取跳过] {mda_file_key} 已存在")
             return mda_file_key
-        except cos_client.exceptions.NoSuchKey:
-            pass
+        except CosServiceError as e:
+            if e.get_error_code() == "NoSuchResource":
+                pass
 
         resp = cos_client.get_object(Bucket=bucket, Key=origin_file_key)
         pdf_data = resp['Body'].get_raw_stream().read()
@@ -294,19 +295,11 @@ class CompanyReportServices(BaseResourceService):
     # ==================== 大模型分析并存储 MDA ====================
     async def _analyze_and_save_mda(
             self,
-            mda_pdf_key: str,
-            stock_short_name: str
+            mda_file: str,
+            source_file: str
     ):
         """异步安全：将MDA PDF转换为Markdown格式"""
         try:
-            mongo_db = await self.get_mongo_db()
-            coll = mongo_db[self._mongo_collection]
-            # 1. 判断是否已入库
-            record = await coll.find_one({"_metadata.mda_file": mda_pdf_key})
-            if record:
-                self.logger.info(f"[解析跳过] {mda_pdf_key} 已入库")
-                return {"success": True}
-
             # 2. PDF转Markdown
             cos_client = await self.get_cos_client()
             async with self.io_semaphore:
@@ -315,7 +308,7 @@ class CompanyReportServices(BaseResourceService):
                         self._convert_mda_to_markdown,
                         cos_client,
                         self._bucket_name,
-                        mda_pdf_key
+                        mda_file
                     ),
                     timeout=120
                 )
@@ -326,36 +319,63 @@ class CompanyReportServices(BaseResourceService):
             # 修复5：长文本分片处理
             md_chunks = self._split_markdown_chunks(markdown_content)
             llm_client = await self.get_llm_instance(self._llm_model)
-            merged_result = None
 
-            # 逐分片调用LLM，分层LLM信号量限流
+            # 逐分片调用LLM，分层LLM信号量限流【改造：分片并发执行】
+            tasks = []
             for idx, chunk in enumerate(md_chunks):
-                self.logger.info(f"LLM分片解析 {mda_pdf_key} 第{idx+1}/{len(md_chunks)}块")
-                async with self.llm_semaphore:
-                    chunk_res = await self._analyze_with_llm_async(llm_client, chunk, max_retries=2)
-                if "error" in chunk_res:
+                self.logger.info(f"LLM分片解析 {mda_file} 第{idx + 1}/{len(md_chunks)}块")
+
+                # 🔧 核心修改：task_func 只返回 chunk_res，不再返回元组
+                async def task_func(text=chunk, chunk_idx=idx):
+                    async with self.llm_semaphore:
+                        try:
+                            chunk_res = await asyncio.wait_for(
+                                self._analyze_with_llm_async(llm_client, text, max_retries=2),
+                                timeout=150
+                            )
+                        except asyncio.TimeoutError:
+                            chunk_res = {"error": "LLM请求超时"}
+                    return chunk_res  # ✅ 直接返回结果字典
+
+                tasks.append(task_func())
+
+            # 1. 并发执行（gather 保证返回顺序与 tasks 一致，无需手动排序）
+            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            merged_result = None
+            for idx, chunk_res in enumerate(chunk_results):
+                # 2. 健壮的错误处理（防止单个分片异常导致整体崩溃）
+                if isinstance(chunk_res, Exception):
                     return {
                         "success": False,
-                        "file_key": mda_pdf_key,
-                        "error": f"分片{idx+1}LLM失败：{chunk_res['error']}"
+                        "file_key": mda_file,
+                        "error": f"分片{idx + 1}LLM调用异常：{str(chunk_res)}"
                     }
-                # 合并分片结果
+
+                if isinstance(chunk_res, dict) and "error" in chunk_res:
+                    return {
+                        "success": False,
+                        "file_key": mda_file,
+                        "error": f"分片{idx + 1}LLM失败：{chunk_res['error']}"
+                    }
+
+                # 3. 执行智能合并
                 if merged_result is None:
                     merged_result = chunk_res
                 else:
                     merged_result = self._merge_chunk_llm_result(merged_result, chunk_res)
 
+            # 🔧 防御性编程：确保 merged_result 一定是字典
+            if not isinstance(merged_result, dict):
+                self.logger.error(f"[类型异常] merged_result 类型为 {type(merged_result)}，强制重置为空字典")
+                merged_result = {}
 
-            company_info =  merged_result
-
-            # 把文件名截取的证券简称写入企业基本信息
-            if "企业基本信息" not in company_info:
-                company_info["企业基本信息"] = {}
-            company_info["企业基本信息"]["证券简称"] = stock_short_name
+            company_info = merged_result
 
             # 5. 元数据
             company_info["_metadata"] = {
-                "mda_file": mda_pdf_key,
+                "source_file": source_file,
+                "mda_file": mda_file,
                 "analysis_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "analysis_model": "qwen"
             }
@@ -363,7 +383,7 @@ class CompanyReportServices(BaseResourceService):
             # 6. 保存MongoDB
             return await self._save_json_to_mongodb(company_info)
         except Exception as e:
-            self.logger.error(f"MDA解析入库异常 mda_pdf_key={mda_pdf_key}, err={str(e)}", exc_info=True)
+            self.logger.error(f"MDA解析入库异常 mda_pdf_key={mda_file}, err={str(e)}", exc_info=True)
             raise
 
     def _convert_mda_to_markdown(self, cos_client, bucket: str, mda_pdf_key: str):
@@ -443,6 +463,7 @@ class CompanyReportServices(BaseResourceService):
         chunks = []
         start_idx = 0
         content_len = len(md_content)
+        chunk_overlap = 0 # RAG需要，长文本分块不需要
         while start_idx < content_len:
             end_idx = min(start_idx + self.llm_chunk_max_len, content_len)
             # 尽量在换行处截断，避免句子割裂
@@ -453,35 +474,85 @@ class CompanyReportServices(BaseResourceService):
             chunk = md_content[start_idx:end_idx].strip()
             if chunk:
                 chunks.append(chunk)
-            start_idx = end_idx
+
+            # 核心改动：下一块起始位置 = 当前结尾 - 重叠长度
+            next_start = end_idx - chunk_overlap
+            # 防止原地卡死无限循环：至少向前推进一小段
+            if next_start <= start_idx:
+                next_start = start_idx + int(self.llm_chunk_max_len * 0.2)
+            start_idx = next_start
+
         self.logger.info(f"Markdown文本分片完成，共 {len(chunks)} 块")
         return chunks
 
-    def _merge_chunk_llm_result(self, base_data: Dict[str, Any], new_chunk_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _merge_chunk_llm_result(self, base: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
         """
-        合并多段LLM分片结果：存量字段保留，新分片补充数据
+        智能合并两个分片的 JSON 提取结果
         规则：
-        1. 列表字段取并集去重
-        2. 基础字符串字段：原数据为"未披露"则覆盖，否则保留原值
-        3. 嵌套字典递归合并
+        1. 字典类型：递归合并
+        2. 列表类型：基于文本相似度去重后追加（防止语义重复）
+        3. 基础类型：优先保留非空、非 null 的值
         """
-        merged = base_data.copy()
-        for k, v in new_chunk_data.items():
-            if k not in merged:
-                merged[k] = v
+        if not isinstance(new, dict):
+            return base
+
+        for key, new_val in new.items():
+            if key not in base:
+                base[key] = new_val
                 continue
-            origin_val = merged[k]
-            # 嵌套字典递归合并
-            if isinstance(origin_val, dict) and isinstance(v, dict):
-                merged[k] = self._merge_chunk_llm_result(origin_val, v)
-            # 列表字段合并去重
-            elif isinstance(origin_val, list) and isinstance(v, list):
-                combine_list = origin_val + v
-                merged[k] = list({json.dumps(item, ensure_ascii=False) for item in combine_list})
-                merged[k] = [json.loads(s) for s in merged[k]]
-            # 普通文本：原数据未披露则更新
-            elif isinstance(origin_val, str) and origin_val == "未披露":
-                merged[k] = v
+
+            base_val = base[key]
+
+            # 1. 递归处理嵌套字典（如 "企业基本信息", "研发能力"）
+            if isinstance(base_val, dict) and isinstance(new_val, dict):
+                base[key] = self._merge_chunk_llm_result(base_val, new_val)
+
+            # 2. 列表去重合并（核心防重复逻辑）
+            elif isinstance(base_val, list) and isinstance(new_val, list):
+                base[key] = self._deduplicate_list(base_val, new_val)
+
+            # 3. 基础值覆盖（优先保留有实际内容的值）
+            else:
+                if base_val in [None, "", "未披露", "null"]:
+                    base[key] = new_val
+                # 如果 base 已经有值，保持 base 不变（避免被后序分片的 null 覆盖）
+
+        return base
+
+    @classmethod
+    def _deduplicate_list(cls, base_list: List, new_list: List, threshold: float = 0.85) -> List:
+        """
+        基于文本相似度对列表进行去重合并
+        threshold: 相似度阈值，超过此值视为重复
+        """
+        merged = base_list[:]
+
+        for new_item in new_list:
+            is_duplicate = False
+            # 仅对字符串类型的列表项进行相似度比对
+            if isinstance(new_item, str):
+                for base_item in merged:
+                    if isinstance(base_item, str):
+                        ratio = difflib.SequenceMatcher(None, base_item, new_item).ratio()
+                        if ratio >= threshold:
+                            is_duplicate = True
+                            # 如果新项更长/更完整，替换旧项
+                            if len(new_item) > len(base_item):
+                                merged[merged.index(base_item)] = new_item
+                            break
+
+            # 如果是字典列表（如 "产品结构"），可在此处扩展基于特定 Key 的去重逻辑
+            # 这里简化处理：若完全相同则跳过，否则追加
+            elif isinstance(new_item, dict):
+                if new_item not in merged:
+                    merged.append(new_item)
+            else:
+                if new_item not in merged:
+                    merged.append(new_item)
+
+            if not is_duplicate and new_item not in merged:
+                merged.append(new_item)
+
         return merged
 
     # ==================== LLM调用 ====================
@@ -494,65 +565,74 @@ class CompanyReportServices(BaseResourceService):
         for attempt in range(max_retries):
             result_text = ""
             try:
-                system_prompt = """
-                    你是资深企业技术情报分析师和产学研合作顾问，从年报MDA章节深度挖掘产学研合作信息。
+                # 使用dedent去除字符串缩进，使多行字符串在代码中美观，但运行时不包含额外空格
+                #
+                clean_system_prompt = textwrap.dedent("""
+                    你是资深企业技术情报分析师和产学研合作顾问。你的任务是从用户输入中提取产学研合作信息，并严格按照指定的JSON格式输出。
                     【核心原则】
-                    1. 数据必须严格来自报告原文，不允许编造
-                    2. 数值型数据必须精确到报告所述
-                    3. 未披露信息填写"未披露"
-                    4. 重点关注可与高校/科研院所结合的技术点
-                """
-                clean_system_prompt = self._compact_text(system_prompt)
+                    1. 绝对忠实原文：数据必须严格来自报告原文，严禁编造、推测或补充外部知识。
+                    2. 精确数值提取：数值型数据必须精确到报告所述，保留原始单位。
+                    3. 缺失值处理：若原文未披露某项信息，该字段必须严格填写为 null，禁止填写"未披露"、"无"等文字，以保证JSON类型的一致性。
+                    4. 产学研导向：重点关注并精准提取可与高校/科研院所结合的技术点、共建平台及联合攻关方向。
+                    【输出格式硬性要求】
+                    1. 仅输出合法的JSON对象，严禁包含任何Markdown标记（如 ```json 等）、前缀说明或后缀解释。
+                    2. 所有字符串必须使用双引号，确保JSON语法绝对正确。
+                    3. 严格遵循以下JSON结构，不得增删任何字段：
+                    {
+                      "企业基本信息": {
+                        "所属领域": "string",
+                        "核心方向": "string",
+                        "技术定位": "string"
+                      },
+                      "主营构成（产学研合作方向）": {
+                        "营业收入（万元）": "number | null",
+                        "营业收入同比增长率": "number | null",
+                        "营业成本（万元）": "number | null",
+                        "毛利率": "number | null",
+                        "产品结构": [
+                          {
+                            "产品类别": "string", 
+                            "核心产品": ["string"], 
+                            "营收权重": "string", 
+                            "核心应用": ["string"]
+                          }
+                        ],
+                        "成本上升原因": ["string"]
+                      },
+                      "核心技术能力（产学研合作核心）": {
+                        "共性关键技术平台": ["string"],
+                        "产品核心技术": ["string"],
+                        "技术优势": ["string"],
+                        "研发能力": {
+                          "研发投入占比": "number | null",
+                          "研发人员数": "number | null",
+                          "累计授权专利": "number | null",
+                          "在研攻关方向": ["string"]
+                        }
+                      },
+                      "产业链与创新资源": {
+                        "上游支撑资源": ["string"],
+                        "中游制造能力": ["string"],
+                        "下游需求场景": ["string"]
+                      },
+                      "研发机构与平台": {
+                        "内部研发平台": "string | null",
+                        "核心能力": "string | null",
+                        "可开放资源": ["string"]
+                      },
+                      "合作需求与方向": {
+                        "可联合攻关方向": ["string"],
+                        "可承接成果转化": "string | null",
+                        "可共建平台": "string | null"
+                      },
+                      "数据来源与校验": "string"
+                    }
+                """)
 
-                user_prompt = f'''
-                    请仔细阅读以下MDA年报内容，严格按照JSON格式输出分析结果。只返回JSON，不要其他文字。
-                    === 内容 ===
+                clean_user_prompt = textwrap.dedent(f'''
+                    请仔细阅读以下MDA年报内容，严格按照系统提示词中的JSON格式返回。
                     {markdown_content}
-                    === JSON格式 ===
-                    {{
-                      "企业基本信息": {{
-                        "所属领域": "主要技术/业务领域",
-                        "核心方向": "企业核心技术和业务方向",
-                        "技术定位": "在行业中的技术地位"
-                      }},
-                      "主营构成（产学研合作方向）": {{
-                        "营业收入（万元）": 数值(万元),
-                        "营业收入同比增长率": 数值,
-                        "营业成本（万元）": 数值(万元),
-                        "毛利率": 数值,
-                        "产品结构": [{{"产品类别": "名称", "核心产品": ["产品1"], "营收权重": "主力/重要", "核心应用": ["应用场景"]}}],
-                        "成本上升原因": ["原因"]
-                      }},
-                      "核心技术能力（产学研合作核心）": {{
-                        "共性关键技术平台": ["技术1"],
-                        "产品核心技术": ["技术1"],
-                        "技术优势": ["优势1"],
-                        "研发能力": {{
-                          "研发投入占比": 数值,
-                          "研发人员数": 人数,
-                          "累计授权专利": 数量,
-                          "在研攻关方向": ["方向1"]
-                        }}
-                      }},
-                      "产业链与创新资源": {{
-                        "上游支撑资源": ["资源1"],
-                        "中游制造能力": ["能力1"],
-                        "下游需求场景": ["场景1"]
-                      }},
-                      "研发机构与平台": {{
-                        "内部研发平台": "平台名称",
-                        "核心能力": "描述",
-                        "可开放资源": ["资源"]
-                      }},
-                      "合作需求与方向": {{
-                        "可联合攻关方向": ["方向1"],
-                        "可承接成果转化": "描述",
-                        "可共建平台": "类型"
-                      }},
-                      "数据来源与校验": "来源说明"
-                    }}
-                    请开始分析：'''
-                clean_user_prompt = self._compact_text(user_prompt)
+                    ''')
 
                 messages = [
                     SystemMessage(content=clean_system_prompt),
@@ -560,7 +640,8 @@ class CompanyReportServices(BaseResourceService):
                 ]
 
                 self.logger.info(f"正在调用千问大模型... (第{attempt + 1}次尝试)")
-                response = await llm_client.ainvoke(messages)
+                # 单次启用JSON输出
+                response = await llm_client.ainvoke(messages, response_format={"type": "json_object"})
                 self.logger.info(f"LLM调用成功，开始解析响应...")
 
                 if not hasattr(response, 'content'):
@@ -599,12 +680,6 @@ class CompanyReportServices(BaseResourceService):
                 if attempt == max_retries - 1:
                     return {"error": f"LLM调用失败: {str(e)}"}
 
-    @staticmethod
-    def _compact_text(text: str) -> str:
-        """压缩文本"""
-        text = re.sub(r'\n+', '\n', text)
-        text = re.sub(r' +', ' ', text)
-        return '\n'.join(line.strip() for line in text.split('\n'))
 
     # ==================== MongoDB存储 ====================
     async def _save_json_to_mongodb(
@@ -617,21 +692,22 @@ class CompanyReportServices(BaseResourceService):
         只更新/新增字段，旧字段 100% 保留
         特别处理：企业基本信息 只新增不存在的键，不覆盖已有键
         """
-        mda_file_key = json_data["_metadata"]["mda_file"]
-        stock_short_name = json_data["企业基本信息"]["证券简称"]
+        mda_file = json_data["_metadata"]["mda_file"]
+        source_file = json_data["_metadata"]["source_file"]
+
         try:
             mongo_db = await self.get_mongo_db()
             collection = mongo_db[self._mongo_collection]
-            filter_stock = {"企业基本信息.证券简称": stock_short_name}
+            filter_stock = {"_metadata.source_file": source_file}
 
-            # 查询是否存在该证券简称的企业
+            # 查询是否存在该企业
             exist_doc = await collection.find_one(filter_stock)
             if not exist_doc:
-                msg = f"未匹配到证券简称【{stock_short_name}】存量文档，跳过入库"
+                msg = f"未匹配到企业年报路径【{source_file}】存量文档，跳过入库"
                 self.logger.warning(msg)
-                return {"success": True, "skip": True, "message": msg, "stock_short_name": stock_short_name}
+                return {"success": True, "skip": True, "message": msg, "source_file": source_file}
 
-            self.logger.info(f"匹配到存量企业【{stock_short_name}】，执行增量更新")
+            self.logger.info(f"匹配到存量企业【{source_file}】，执行增量更新")
             # 拆分企业基本信息，打点更新，只新增不覆盖原有字段
             new_company_base = json_data.pop("企业基本信息", {})
             update_set = {}
@@ -654,23 +730,22 @@ class CompanyReportServices(BaseResourceService):
                 "skip": False,
                 "matched": result.matched_count,
                 "modified": result.modified_count,
-                "stock_short_name": stock_short_name,
-                "mda_file": mda_file_key,
+                "source_file": source_file,
+                "mda_file": mda_file,
                 "message": "存量企业增量更新完成"
             }
 
         except Exception as e:
-            err_msg = f"Mongo入库异常 证券简称={stock_short_name}, mda={json_data.get('_metadata', {}).get('mda_file')}, err={str(e)}"
+            err_msg = f"Mongo入库异常 source_file={source_file}, mda={json_data.get('_metadata', {}).get('mda_file')}, err={str(e)}"
             self.logger.error(err_msg, exc_info=True)
             return {"success": False, "error": err_msg}
 
 
 
-# # 测试入口
-# async def main():
-#     cfg = {"start_time": "2025-01-01 00:00:00", "end_time": "2025-12-31 00:00:00", "batch_size": 100}
-#     service = CompanyReportServices(cfg, max_workers=3)
-#     await service.process_batch_async(source_prefix="2025年/")
-#
-# if __name__ == '__main__':
-#     asyncio.run(main())
+# ==================== 测试入口 ==========================
+async def main():
+    service = CompanyReportServices()
+    await service.process_batch_async()
+
+if __name__ == '__main__':
+    asyncio.run(main())

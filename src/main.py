@@ -13,7 +13,7 @@ from src.services.base_resource_service import BaseResourceService
 # 导入路由模块
 from src.api import system_router, etl_router, front_router, qdrant_router
 # ===== 新增：导入etl定时调度器相关 =====
-from src.api.etl_api import scheduler, register_all_schedule_jobs
+from src.core.scheduler import init_scheduler, shutdown_scheduler
 
 # 配置日志
 logger = get_logger(__name__)
@@ -55,13 +55,16 @@ async def lifespan(app: FastAPI):
         # await BaseResourceService.get_llm_instance("qwen")
         # logger.info("✅ LLM客户端初始化完成")
 
+        await init_scheduler()
+        logger.info("✅ APScheduler ETL定时调度器启动成功")
+
         logger.info("===== 所有数据库资源预热完毕，开始接收请求 =====")
 
         # ===================== 启动ETL定时调度器 =====================
-        register_all_schedule_jobs()
-        if not scheduler.running:
-            scheduler.start()
-            logger.info("✅ APScheduler ETL定时调度器启动成功")
+        # register_all_schedule_jobs()
+        # if not scheduler.running:
+        #     scheduler.start()
+        #     logger.info("✅ APScheduler ETL定时调度器启动成功")
 
         logger.info("===== 服务就绪，开始接收请求 =====")
 
@@ -77,10 +80,10 @@ async def lifespan(app: FastAPI):
     logger.info("===== 收到关闭信号，开始销毁数据库连接 =====")
     try:
         # ===================== 关闭定时调度器 =====================
-        if scheduler.running:
-            scheduler.shutdown()
-            logger.info("✅ APScheduler ETL定时调度器已关闭")
-
+        # if scheduler.running:
+        #     scheduler.shutdown()
+        #     logger.info("✅ APScheduler ETL定时调度器已关闭")
+        await shutdown_scheduler()
         # 可在这里补充统一关闭所有数据库连接/模型资源的静态方法
         await BaseResourceService.close_all_resource()
         logger.info("✅ 全部异步数据库连接已正常关闭")

@@ -4,7 +4,6 @@ from src.utils.security import ETLAuthGuard
 import uuid
 from pydantic import BaseModel, Field
 from enum import Enum
-from src.core.scheduler import scheduler, CronTrigger
 from src.services.ETL.task_manager import TaskManager
 from src.services.ETL.service_registry import ServiceRegistry
 from datetime import datetime, timedelta
@@ -26,22 +25,28 @@ task_manager = TaskManager(
     consumer_workers=3
 )
 
-# ====================== ETL定时任务配置【仅ETL模块自己的定时任务】 ======================
-# 每个ETL服务独立配置【定时cron + 运行参数】
-SCHEDULE_ETL_TASKS = {
-    "teacher_profile_vector": {
-        "cron": CronTrigger(hour=2, minute=30),
-        "config": {
-            "batch_size": 1000
-        }
-    }
-    # 可继续添加其他服务，各自独立定时
-    # "xxx_service": {
-    #     "cron": CronTrigger(hour=4, minute=0),
-    #     "config": {"batch_size":2000}
-    # }
-}
+class ETLTypes(str, Enum):
+    # qdrant_company_patent = 'qdrant_company_patent'
+    # qdrant_university_patent = 'qdrant_university_patent'
+    # qdrant_company_patent_payload = 'qdrant_company_patent_payload'
+    # qdrant_university_patent_payload = 'qdrant_university_patent_payload'
+    # neo4j_scholar = 'neo4j_scholar'
+    # neo4j_university_patent = 'neo4j_university_patent'
+    # neo4j_company_patent = 'neo4j_company_patent'
+    teacher_profile_vector = 'teacher_profile_vector'
 
+class ETLRequest(BaseModel):
+    start_time: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+        description="格式：yyyy-MM-dd HH:mm:ss",
+        examples=["2026-07-01 00:00:00"]
+    )
+    end_time: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+        description="格式：yyyy-MM-dd HH:mm:ss",
+        examples=["2026-07-20 00:00:00"]
+    )
+    batch_size: int = 1000
 
 async def scheduled_etl_task(service_name: str, cfg: dict):
     """异步ETL定时任务，与FastAPI共用同一个事件循环"""
@@ -69,47 +74,6 @@ async def scheduled_etl_task(service_name: str, cfg: dict):
     except Exception as e:
         logger.error(f"[定时ETL] {service_name} 执行异常: {str(e)}", exc_info=True)
 
-
-def register_all_schedule_jobs():
-    """遍历配置注册所有独立定时任务"""
-    for srv_name, task_info in SCHEDULE_ETL_TASKS.items():
-        job_id = f"daily_etl_{srv_name}"
-        cron_trigger = task_info["cron"]
-        task_cfg = task_info["config"]
-
-        scheduler.add_job(
-            func=scheduled_etl_task,
-            trigger=cron_trigger,
-            args=[srv_name, task_cfg],
-            id=job_id,
-            replace_existing=True,
-            max_instances=1
-        )
-        logger.info(f"✅ 注册定时任务 {job_id} | cron: {cron_trigger}")
-    logger.info(f"✅ 总计加载 {len(SCHEDULE_ETL_TASKS)} 个ETL定时任务")
-
-class ETLTypes(str, Enum):
-    # qdrant_company_patent = 'qdrant_company_patent'
-    # qdrant_university_patent = 'qdrant_university_patent'
-    # qdrant_company_patent_payload = 'qdrant_company_patent_payload'
-    # qdrant_university_patent_payload = 'qdrant_university_patent_payload'
-    # neo4j_scholar = 'neo4j_scholar'
-    # neo4j_university_patent = 'neo4j_university_patent'
-    # neo4j_company_patent = 'neo4j_company_patent'
-    teacher_profile_vector = 'teacher_profile_vector'
-
-class ETLRequest(BaseModel):
-    start_time: str = Field(
-        pattern=r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
-        description="格式：yyyy-MM-dd HH:mm:ss",
-        examples=["2026-07-01 00:00:00"]
-    )
-    end_time: str = Field(
-        pattern=r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
-        description="格式：yyyy-MM-dd HH:mm:ss",
-        examples=["2026-07-20 00:00:00"]
-    )
-    batch_size: int = 1000
 
 # 启动任务接口
 @router.post("/start")
@@ -178,18 +142,3 @@ async def rerun_failed_task(req: ResumeETLRequest):
         "message": "failed batch rerun started"
     }
 
-
-# ====================== 定时任务查询接口 ======================
-@router.get("/schedule/list")
-async def list_schedule_jobs():
-    """查看当前所有ETL定时任务及下次执行时间"""
-    jobs = scheduler.get_jobs()
-    res = []
-    for job in jobs:
-        res.append({
-            "job_id": job.id,
-            "service_name": job.args[0] if len(job.args) > 0 else None,
-            "next_run_time": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else None,
-            "trigger": str(job.trigger)
-        })
-    return {"schedule_jobs": res}

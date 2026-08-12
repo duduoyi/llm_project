@@ -3,7 +3,6 @@ import aiohttp
 from io import BytesIO
 from typing import Optional
 import re
-from datetime import datetime, timedelta
 from src.services.base_resource_service import BaseResourceService
 from src.utils.logger import get_logger
 
@@ -11,6 +10,7 @@ from src.utils.logger import get_logger
 class AttachmentConsumer(BaseResourceService):
     DOWNLOAD_TIMEOUT = 15
     MAX_RETRY = 2
+    name = "policy_attachment_download"
 
     def __init__(self):
         """
@@ -106,18 +106,14 @@ class AttachmentConsumer(BaseResourceService):
         )
         print(f"【完成】文档 {doc_id} 全部附件处理完毕，状态更新为 success\n")
 
-    async def batch_scan_today_task(self):
+    async def batch_scan_today_task(self, start_time, end_time):
         """扫描当日 update_time、状态 != success 的文档"""
-        now = datetime.now()
-        # 当天零点 ~ 次日零点
-        start = datetime(now.year, now.month, now.day, 0, 0, 0)
-        end = start + timedelta(days=1)
 
         query = {
-            "update_time": {"$gte": start, "$lt": end},
+            "update_time": {"$gte": start_time, "$lt": end_time},
             "attach_task_status": {"$ne": "success"}
         }
-        print(f"\n===== 开始扫描当日任务，日期范围 {start.date()} =====")
+        print(f"\n===== 开始扫描当日任务，日期范围 {start_time.date()} =====")
         mongo_db = await self.get_mongo_db("crawl")
         collection = mongo_db[self._mongo_collection]
         cursor = collection.find(
@@ -143,10 +139,10 @@ class AttachmentConsumer(BaseResourceService):
 
 
 # ====================== 异步测试入口 ======================
-async def main():
-    service = AttachmentConsumer()
-    await service.batch_scan_today_task()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# async def main():
+#     service = AttachmentConsumer()
+#     await service.batch_scan_today_task("2026-08-01 00:00:00", "2026-08-02 00:00:00")
+#
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())

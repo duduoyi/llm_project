@@ -46,3 +46,6 @@ uvicorn==0.35.0
 python-dotenv==1.0.1
 # 定时调度器
 apscheduler==3.11.3
+
+# =========页面JS动态渲染===================
+playwright==1.62.0
