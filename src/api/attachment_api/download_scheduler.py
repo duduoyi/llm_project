@@ -1,11 +1,12 @@
-from src.core.scheduler import scheduler, CronTrigger
+from apscheduler.triggers.cron import CronTrigger
 from src.utils.logger import get_logger
 from src.api.attachment_api.policy_attachment_api import policy_attachment_download
+from src.api.attachment_api.qcc_company_api import qcc_company_download
 
 logger = get_logger("download_scheduler")
 
 # 每个ETL服务独立配置【定时cron + 运行参数】
-SCHEDULE_DOWNLOAD_TASKS = {
+SCHEDULE_DOWNLOAD_TASKS = [
     {
         "job_id": "policy_attachment_download",
         "func": policy_attachment_download,
@@ -13,16 +14,16 @@ SCHEDULE_DOWNLOAD_TASKS = {
         "args": [],
         "max_instances": 1
     },
-#     {
-#         "job_id": "xxxxx",
-#         "func": xxxxx,
-#         "trigger": IntervalTrigger(hours=12),
-#         "args": [30],  # 清理30天前消息
-#         "max_instances": 1
-#     },
-}
+    {
+        "job_id": "qcc_company_download",
+        "func": qcc_company_download,
+        "trigger": CronTrigger(hour=16, minute=25),
+        "args": [],  # 函数传参
+        "max_instances": 1
+    },
+]
 
-def register_download_schedule_jobs():
+def register_download_schedule_jobs(scheduler):
     """注册通知模块所有定时任务"""
     for job_cfg in SCHEDULE_DOWNLOAD_TASKS:
         scheduler.add_job(

@@ -19,7 +19,7 @@ async def policy_attachment_download():
     """异步ETL定时任务，与FastAPI共用同一个事件循环"""
 
     service = AttachmentConsumer()
-    service_name = service.__name__
+    service_name = service.name
 
     try:
         # 定时任务自动填充前一日时间范围

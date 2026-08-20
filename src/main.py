@@ -14,6 +14,7 @@ from src.services.base_resource_service import BaseResourceService
 from src.api import system_router, etl_router, front_router, qdrant_router
 # ===== 新增：导入etl定时调度器相关 =====
 from src.core.scheduler import init_scheduler, shutdown_scheduler
+from src.core.job_register import register_all_scheduled_tasks
 
 # 配置日志
 logger = get_logger(__name__)
@@ -54,7 +55,9 @@ async def lifespan(app: FastAPI):
         # # 预热 LLM（只是实例创建，不会发起网络请求；真正调用才会访问大模型接口）
         # await BaseResourceService.get_llm_instance("qwen")
         # logger.info("✅ LLM客户端初始化完成")
-
+        # 1.先注册所有job
+        register_all_scheduled_tasks()
+        logger.info("✅ register_all_scheduled_tasks 注册定时任务")
         await init_scheduler()
         logger.info("✅ APScheduler ETL定时调度器启动成功")
 

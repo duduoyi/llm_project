@@ -33,3 +33,9 @@ if FRONTEND_API_KEY:
 # --------------------------
 if ENVIRONMENT == "production" and not ETL_API_KEY_MAP:
     raise ValueError("未配置任何有效的ETL API Key（检查.env文件或环境变量）")
+
+
+# 企查查
+QCC_APP_KEY: Optional[str] = os.getenv("QCC_APP_KEY", "")
+# 前端数据返回（仅读权限）
+QCC_SECRECT_KEY: Optional[str] = os.getenv("QCC_SECRECT_KEY", "")

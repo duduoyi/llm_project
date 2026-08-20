@@ -1,4 +1,4 @@
-from src.core.scheduler import scheduler, CronTrigger
+from apscheduler.triggers.cron import CronTrigger
 from src.api.etl_api.etl_api import scheduled_etl_task
 from src.utils.logger import get_logger
 
@@ -21,7 +21,7 @@ SCHEDULE_ETL_TASKS = {
 }
 
 
-def register_etl_schedule_jobs():
+def register_etl_schedule_jobs(scheduler):
     """遍历配置注册所有独立定时任务"""
     for srv_name, task_info in SCHEDULE_ETL_TASKS.items():
         job_id = f"daily_etl_{srv_name}"
