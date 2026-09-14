@@ -17,7 +17,7 @@ SCHEDULE_DOWNLOAD_TASKS = [
     {
         "job_id": "qcc_company_download",
         "func": qcc_company_download,
-        "trigger": CronTrigger(hour=16, minute=25),
+        "trigger": CronTrigger(hour=1, minute=30),
         "args": [],  # 函数传参
         "max_instances": 1
     },

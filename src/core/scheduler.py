@@ -1,15 +1,14 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from src.utils.logger import get_logger
 
 logger = get_logger("scheduler")
 # 后续新增任何业务模块，只需要在这里import对应的注册函数
 
+# 外部要import的对象
+__all__ = ["scheduler", "init_scheduler", "shutdown_scheduler"]
+
 # 全局异步调度器
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
-# 对外导出CronTrigger保持原有业务代码不变
-__all__ = ["scheduler", "CronTrigger"]
-
 
 async def init_scheduler():
     if not scheduler.running:

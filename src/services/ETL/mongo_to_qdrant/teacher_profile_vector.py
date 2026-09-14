@@ -52,6 +52,7 @@ class TeacherProfileVector(BaseETLService):
                 "name": 1,
                 "university": 1,
                 "college": 1,
+                "contact.email": 1,
                 "research_areas": 1,
                 "application_areas": 1,
                 "createTime": 1
@@ -62,7 +63,11 @@ class TeacherProfileVector(BaseETLService):
         async for doc in cursor:
             # 【兼容TaskManager！新增虚拟字段 id = _id】
             doc["id"] = doc["_id"]
+            email = doc.get("contact", {}).get("email", None)
+            doc.pop("contact", None)  # 移除嵌套contact
+            doc["email"] = email  # 顶层增加email字段
             batch_data.append(doc)
+
         return batch_data
 
     async def process_batch(self, batch_data):
@@ -81,6 +86,7 @@ class TeacherProfileVector(BaseETLService):
             name = doc.get("name", "")
             university = doc.get("university", "")
             college = doc.get("college", "")
+            email = doc.get("email", "")
             research_areas = str(doc.get("research_areas", "")).strip()
             application_areas = str(doc.get("application_areas", "")).strip()
 
@@ -99,7 +105,8 @@ class TeacherProfileVector(BaseETLService):
                 "mongo_id": str(mongo_obj_id),
                 "name": str(name),
                 "university": str(university),
-                "college": str(college)
+                "college": str(college),
+                "email": str(email),
             }
             point_meta.append(payload)
 
@@ -118,17 +125,7 @@ class TeacherProfileVector(BaseETLService):
         # 批量异步向量化（自带信号量限流）
         emb_wrapper = EmbeddingFactory.get_instance()
         vectors = await emb_wrapper.aembed_documents(text_list)
-
-        # 组装PointStruct
-        points = []
-        for pid, vec, meta in zip(point_ids, vectors, point_meta):
-            points.append(models.PointStruct(
-                id=pid,
-                vector=vec,
-                payload=meta
-            ))
-
-        # ========== Qdrant写入，加全局锁 ==========
+        # 连接 qdrant
         qdrant_collection = 'teacher_profile'
         qdrant_client = await self.get_qdrant_client()
         exist_flag = await qdrant_client.collection_exists(qdrant_collection)
@@ -136,6 +133,35 @@ class TeacherProfileVector(BaseETLService):
             self.logger.error(f"Qdrant集合 {qdrant_collection} 不存在！请先创建集合")
             return False, f"集合{qdrant_collection}不存在"
 
+        # 组装PointStruct
+        # --------------------------
+        # 新增逻辑：批量读取已存在point的 sent_mail_directions
+        # --------------------------
+        retrieve_res = await qdrant_client.retrieve(
+            collection_name=qdrant_collection,
+            ids=point_ids,
+            with_payload=["sent_mail_directions"],
+            with_vector=False
+        )
+        # id -> 历史已发送方向列表映射
+        sent_dir_map = {}
+        for point in retrieve_res:
+            pid = int(point.id)
+            pl = point.payload or {}
+            sent_dir_map[pid] = pl.get("sent_mail_directions", [])
+
+        points = []
+        for pid, vec, meta in zip(point_ids, vectors, point_meta):
+            final_payload = dict(meta)
+            # 存在则取旧值，不存在初始化为空列表
+            final_payload["sent_mail_directions"] = sent_dir_map.get(pid, [])
+            points.append(models.PointStruct(
+                id=pid,
+                vector=vec,
+                payload=final_payload
+            ))
+
+        # ========== Qdrant写入，加全局锁 ==========
         await qdrant_client.upsert(
             collection_name=qdrant_collection,
             points=points

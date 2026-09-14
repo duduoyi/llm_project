@@ -118,8 +118,7 @@ class CompanyBaseUpdate(BaseResourceService):
                     name_items.append(item)
 
         former_name = ",".join(name_items) if name_items else ""
-
-
+        self.logger.info("映射数据库已有字段")
         company_map = {
             "企业基本信息": {
                 "企业名称": result.get("Name", ""),
@@ -246,11 +245,11 @@ class CompanyBaseUpdate(BaseResourceService):
         return success
 
 
-# ====================== 异步测试入口 ======================
-async def main():
-    service = CompanyBaseUpdate()
-    await service.pipeline()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# # ====================== 异步测试入口 ======================
+# async def main():
+#     service = CompanyBaseUpdate()
+#     await service.pipeline()
+#
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())

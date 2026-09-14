@@ -34,6 +34,7 @@ class ETLTypes(str, Enum):
     # neo4j_university_patent = 'neo4j_university_patent'
     # neo4j_company_patent = 'neo4j_company_patent'
     teacher_profile_vector = 'teacher_profile_vector'
+    teacher_profile_payload = 'teacher_profile_payload'
 
 class ETLRequest(BaseModel):
     start_time: str = Field(

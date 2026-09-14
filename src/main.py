@@ -1,6 +1,6 @@
 # 应用入口
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
@@ -121,7 +121,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # 自定义 Swagger UI 路由，加载本地资源
 @app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui_html(request: Request):
+async def custom_swagger_ui_html():
     return get_swagger_ui_html(
         openapi_url=app.openapi_url,
         title=app.title + " - Swagger UI",
