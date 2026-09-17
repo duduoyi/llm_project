@@ -281,11 +281,23 @@ class CompanyBaseUpdate(BaseResourceService):
         tasks = [self._single_task(name) for name in company_list]
         results = await asyncio.gather(*tasks)
 
-        success = sum(1 for r in results if r is True)
+        success = 0
+        no_result = 0
+        error = 0
         total = len(company_list)
-        fail = total - success
+        for r in results:
+            if r == "success":
+                success += 1
+            elif r == "no_result":
+                no_result += 1
+            elif r == "error":
+                error += 1
+            else:
+                # 捕获未知返回值，打日志告警
+                self.logger.warning(f"未知任务返回状态: {r}")
+                error += 1
 
-        self.logger.info(f"任务结束 total:{total}, success:{success}, fail:{fail}")
+        self.logger.info(f"任务结束 total:{total}, success:{success}, no_result:{no_result}, error:{error}")
         return success
 
 

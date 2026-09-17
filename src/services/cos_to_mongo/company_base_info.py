@@ -323,12 +323,12 @@ class CompanyBaseInfo(BaseResourceService):
         return success
 
 
-# ====================== 异步测试入口 ======================
-async def main():
-    service = CompanyBaseInfo()
-    await service.listed_company_to_mongodb("nantong_listed_company/")
-    # await service.qcc_company_to_mongodb("南通市专精特新“小巨人”企业及上市企业.xlsx")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# # ====================== 异步测试入口 ======================
+# async def main():
+#     service = CompanyBaseInfo()
+#     await service.listed_company_to_mongodb("nantong_listed_company/")
+#     await service.qcc_company_to_mongodb("【企查查】昆山_制造业和科学_20260401-20260824.xlsx")
+#
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())
