@@ -180,7 +180,7 @@ class CompanyBaseInfo(BaseResourceService):
             sec_name = str(company.get("证券简称", "")).strip()
     
             # 匹配所有 ST 开头的公司
-            if not re.match(r'^(ST|\*ST|SST)', sec_name):
+            if not re.match(r"^(ST|\*ST|SST)", sec_name):
                 filtered.append(company)
     
         self.logger.info(f"✅ 过滤完成：原始 {len(company_list)} 条，保留 {len(filtered)} 条正常公司")
@@ -240,10 +240,10 @@ class CompanyBaseInfo(BaseResourceService):
                 sheet_name=sheet_name,
                 header=header,
                 usecols=usecols,
-                engine='openpyxl'
+                engine="openpyxl"
             )
             self.logger.debug(f"COS文件Key: {file_key} (表名: {sheet_name}, 行数: {len(df)})")
-            jsons = df.to_dict(orient='records')
+            jsons = df.to_dict(orient="records")
             return jsons
         except cos_client.exceptions.NoSuchKey:
             self.logger.error(f"COS 文件不存在 key={file_key}")
@@ -265,7 +265,45 @@ class CompanyBaseInfo(BaseResourceService):
         # 生成最终结构（包含 _id）
         final_data = {
             "_id": clean_company_name,  # MongoDB id 使用公司名称
-            "企业基本信息": company
+            "企业基本信息": {
+                "企业名称": company_name,
+                "登记状态": company.get("登记状态", ""),
+                "法定代表人": company.get("法定代表人", ""),
+                "注册资本": company.get("注册资本", ""),
+                "实缴资本": company.get("实缴资本", ""),
+                "成立日期": company.get("成立日期", ""),
+                "统一社会信用代码": company.get("统一社会信用代码", ""),
+                "企业地址": company.get("企业地址", "") or company.get("注册地址", ""),
+                "所属省份": company.get("所属省份", ""),
+                "所属城市": company.get("所属城市", ""),
+                "所属区县": company.get("所属区县", ""),
+                "电话": company.get("电话", "") or company.get("有效手机号", ""),
+                "更多电话": company.get("更多电话", ""),
+                "邮箱": company.get("邮箱", ""),
+                "更多邮箱": company.get("更多邮箱", ""),
+                "企业（机构）类型": company.get("企业（机构）类型", "") or company.get("企业(机构)类型", ""),
+                "参保人数": company.get("参保人数", ""),
+                "参保人数所属年报": company.get("参保人数所属年报", ""),
+                "营业期限": company.get("营业期限", ""),
+                "国标行业门类": company.get("国标行业门类", ""),
+                "国标行业大类": company.get("国标行业大类", ""),
+                "国标行业中类": company.get("国标行业中类", ""),
+                "国标行业小类": company.get("国标行业小类", ""),
+                "企查查行业门类": company.get("企查查行业门类", ""),
+                "企查查行业大类": company.get("企查查行业大类", ""),
+                "企查查行业中类": company.get("企查查行业中类", ""),
+                "企查查行业小类": company.get("企查查行业小类", ""),
+                "企业规模": company.get("企业规模", ""),
+                "曾用名": company.get("曾用名", ""),
+                "英文名": company.get("英文名", ""),
+                "官网": company.get("官网", "") or company.get("官网网址", ""),
+                "通信地址": company.get("通信地址", ""),
+                "企业简介": company.get("企业简介", ""),
+                "经营范围": company.get("经营范围", ""),
+                "登记机关": company.get("登记机关", ""),
+                "最新年报年份": company.get("最新年报年份", ""),
+                "企业荣誉": company.get("企业荣誉", "")
+            }
         }
         return final_data
 
@@ -323,12 +361,12 @@ class CompanyBaseInfo(BaseResourceService):
         return success
 
 
-# # ====================== 异步测试入口 ======================
-# async def main():
-#     service = CompanyBaseInfo()
-#     await service.listed_company_to_mongodb("nantong_listed_company/")
-#     await service.qcc_company_to_mongodb("【企查查】昆山_制造业和科学_20260401-20260824.xlsx")
-#
-#
-# if __name__ == "__main__":
-#     asyncio.run(main())
+# ====================== 异步测试入口 ======================
+async def main():
+    service = CompanyBaseInfo()
+    # await service.listed_company_to_mongodb("nantong_listed_company/")
+    await service.qcc_company_to_mongodb("【企查查】昆山_制造业和科学_20260401-20260824.xlsx")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

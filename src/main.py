@@ -11,7 +11,7 @@ from src.config.app import origins
 # 导入异步数据库单例
 from src.services.base_resource_service import BaseResourceService
 # 导入路由模块
-from src.api import system_router, etl_router, front_router, qdrant_router
+from src.api import system_router, etl_router, front_router, qdrant_router, qcc_router
 # ===== 新增：导入etl定时调度器相关 =====
 from src.core.scheduler import init_scheduler, shutdown_scheduler
 from src.core.job_register import register_all_scheduled_tasks
@@ -135,6 +135,7 @@ app.include_router(system_router)
 app.include_router(etl_router)
 app.include_router(front_router)
 app.include_router(qdrant_router)
+app.include_router(qcc_router)
 
 # 应用入口
 if __name__ == "__main__":

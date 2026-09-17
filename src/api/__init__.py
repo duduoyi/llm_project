@@ -4,3 +4,4 @@ from .system_api import router as system_router
 from .etl_api.etl_api import  router as etl_router
 from .front_api import router as front_router
 from .qdrant_api import router as qdrant_router
+from .attachment_api.qcc_company_api import router as qcc_router
