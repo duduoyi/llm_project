@@ -262,6 +262,7 @@ class CompanyBaseInfo(BaseResourceService):
         company_name = company.get("企业名称", "")
         # 替换英文括号为中文
         clean_company_name = str(company_name).replace("(", "（").replace(")", "）")
+
         # 生成最终结构（包含 _id）
         final_data = {
             "_id": clean_company_name,  # MongoDB id 使用公司名称
@@ -301,10 +302,15 @@ class CompanyBaseInfo(BaseResourceService):
                 "企业简介": company.get("企业简介", ""),
                 "经营范围": company.get("经营范围", ""),
                 "登记机关": company.get("登记机关", ""),
-                "最新年报年份": company.get("最新年报年份", ""),
-                "企业荣誉": company.get("企业荣誉", "")
+                "最新年报年份": company.get("最新年报年份", "")
             }
         }
+        if "企业荣誉" in company and company["企业荣誉"] is not None:
+            company_title = company.get("企业荣誉")
+            company_title_list = [item.strip() for item in company_title.split(';') if item.strip()]
+            if company_title_list:
+                final_data["企业基本信息"]["企业荣誉"] = company_title_list
+
         return final_data
 
     async def _save_to_mongodb(self, data_list):
@@ -338,20 +344,22 @@ class CompanyBaseInfo(BaseResourceService):
                         update_query[field_path] = value
 
             try:
+                update_op = {}
                 if update_query:
-                    await collection.update_one(
-                        {"_id": company_name},
-                        {"$set": update_query},
-                        upsert=True
-                    )
+                    update_op["$set"] = update_query
 
                 # 2. 追加荣誉（已经修复成数组，直接push）
-                if honor_value is not None:
+                if honor_value is not None and isinstance(honor_value, list) and len(honor_value) > 0:
+                    # $addToSet + $each：不存在字段则新建；存在则追加元素，自动去重
+                    update_op["$addToSet"] = {
+                        "企业基本信息.企业荣誉": {"$each": honor_value}
+                    }
+
+                # 执行单次更新，upsert=True不存在文档就新建
+                if update_op:
                     await collection.update_one(
                         {"_id": company_name},
-                        {"$push": {
-                            "企业基本信息.企业荣誉": honor_value
-                        }},
+                        update_op,
                         upsert=True
                     )
 
@@ -365,7 +373,7 @@ class CompanyBaseInfo(BaseResourceService):
 async def main():
     service = CompanyBaseInfo()
     # await service.listed_company_to_mongodb("nantong_listed_company/")
-    await service.qcc_company_to_mongodb("【企查查】昆山_制造业和科学_20260401-20260824.xlsx")
+    await service.qcc_company_to_mongodb("武汉专精特新企业_洪山东西湖蔡甸江夏.xlsx")
 
 
 if __name__ == "__main__":
