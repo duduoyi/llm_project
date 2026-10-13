@@ -373,7 +373,7 @@ class CompanyBaseInfo(BaseResourceService):
 async def main():
     service = CompanyBaseInfo()
     # await service.listed_company_to_mongodb("nantong_listed_company/")
-    await service.qcc_company_to_mongodb("武汉专精特新企业_洪山东西湖蔡甸江夏.xlsx")
+    await service.qcc_company_to_mongodb("昆山市-专精特新中小企业.xlsx")
 
 
 if __name__ == "__main__":

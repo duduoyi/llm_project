@@ -4,6 +4,8 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from src.config.app import LOG_CONFIG
 
+# 全局标记，保证handler全局只初始化一次
+_HANDLER_INITIALIZED = False
 
 def get_logger(name):
     """获取配置好的日志器，按日切割，自动保留最近7天日志"""
@@ -13,10 +15,12 @@ def get_logger(name):
     log_level = LOG_CONFIG.get('level')
     logger.setLevel(log_level)
 
-    # 避免重复添加处理器
-    if logger.handlers:
+    global _HANDLER_INITIALIZED
+    if _HANDLER_INITIALIZED:
+        # 已经初始化过handler，直接返回logger，不新建handler
         return logger
 
+    # ========= 只执行一次，初始化handler挂载到root logger =========
     # 项目根目录（假设当前文件在src/utils下，向上两级为项目根目录）
     project_root = Path(__file__).parent.parent.parent
     log_dir = project_root / 'logs'
@@ -56,8 +60,11 @@ def get_logger(name):
     if 'console_level' in LOG_CONFIG:
         console_handler.setLevel(LOG_CONFIG['console_level'])
 
+    # 添加到root根logger，所有子logger通过propagate向上传递日志
+    root_logger = logging.getLogger()
     # 添加处理器
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
+    _HANDLER_INITIALIZED = True
     return logger
