@@ -7,7 +7,7 @@ from src.services.base_resource_service import BaseResourceService
 from src.utils.logger import get_logger
 
 
-class AttachmentConsumer(BaseResourceService):
+class PolicyAttachmentDownload(BaseResourceService):
     DOWNLOAD_TIMEOUT = 15
     MAX_RETRY = 2
     name = "policy_attachment_download"

@@ -2,7 +2,7 @@ from fastapi.responses import JSONResponse
 from fastapi import APIRouter, HTTPException, Depends
 from src.utils.security import ETLAuthGuard
 from pydantic import BaseModel, Field
-from src.services.policy_attachment_to_cos import AttachmentConsumer
+from src.services.policy_attachment_to_cos import PolicyAttachmentDownload
 from datetime import datetime, timedelta
 from src.utils.logger import get_logger
 
@@ -18,7 +18,7 @@ router = APIRouter(
 async def policy_attachment_download():
     """异步ETL定时任务，与FastAPI共用同一个事件循环"""
 
-    service = AttachmentConsumer()
+    service = PolicyAttachmentDownload()
     service_name = service.name
 
     try:
@@ -50,11 +50,11 @@ class DownloadRequest(BaseModel):
     )
 
 # 启动任务接口
-@router.post("/download")
+@router.post("/")
 async def start_download(
         request: DownloadRequest
 ):
-    service = AttachmentConsumer()
+    service = PolicyAttachmentDownload()
 
     try:
         start_dt = datetime.strptime(request.start_time, "%Y-%m-%d %H:%M:%S")

@@ -97,6 +97,7 @@ class CompanyBaseInfo(BaseResourceService):
             # 3. 存入MongoDB
             success = await self._save_to_mongodb(update_data)
             self.logger.info(f"✅ 完成同步：{success} 条数据（仅给企业基本信息新增字段，所有旧数据完全保留）")
+            return success
         except Exception as e:
             self.logger.error(
                 f"企查查企业同步任务异常 file_name={file_name}, err={str(e)}",

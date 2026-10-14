@@ -1,7 +1,7 @@
 services:
   fastapi-app:
     # 核心：直接指定本地已有的镜像（替换为你的镜像名:标签）
-    image: fastapi-etl:v2  # 必须与本地已构建的镜像名一致
+    image: fastapi-etl:v3.2  # 必须与本地已构建的镜像名一致
     container_name: my-fastapi-etl-pro  # 固定容器名，方便管理
 #    restart: unless-stopped  # 容器退出后自动重启（除非手动停止）
     ports:
@@ -9,7 +9,7 @@ services:
     volumes:
       # 外部挂载模型目录（宿主机路径替换为你的实际路径）
       - ./models:/app/models
-      # 外部挂载三方静态资源目录（宿主机路径替换为你的实际路径）
+      # 外部挂载三方静态资源目录（宿主机路径替换为你的实际路径）ls
       - ./static:/app/static
       # 可选：挂载日志目录（方便查看容器日志）
       - ./logs:/app/logs
